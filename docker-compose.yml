@@ -1,0 +1,55 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./phase0d_multi:/data/phase0d_multi:ro
+      - ./data/jobs:/data/jobs
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PARQUET_DIR=/data/phase0d_multi
+      - JOBS_DIR=/data/jobs
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A celery_app.celery worker --loglevel=info --concurrency=2
+    volumes:
+      - ./backend:/app
+      - ./phase0d_multi:/data/phase0d_multi:ro
+      - ./data/jobs:/data/jobs
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PARQUET_DIR=/data/phase0d_multi
+      - JOBS_DIR=/data/jobs
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api

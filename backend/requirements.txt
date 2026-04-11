@@ -1,0 +1,11 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+celery==5.4.0
+redis==5.1.1
+pandas==2.2.3
+pyarrow==17.0.0
+numpy==2.1.1
+scikit-learn==1.5.2
+xgboost==2.1.1
+python-multipart==0.0.12
+pydantic-settings==2.5.2

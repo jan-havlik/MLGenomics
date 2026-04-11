@@ -1,0 +1,49 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# Virtual environments (root-level venv and .venv/)
+bin/
+include/
+lib/
+lib64
+pyvenv.cfg
+.venv/
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+
+# ── Large genome / sequence files ─────────────────────────────────────────────
+# FASTA sequences
+*.fa
+*.fa.gz
+# Annotation GTF
+*.gtf.gz
+# CpG reference tables
+phase05_real_data/cpgIslandExt.txt
+phase05_real_data/cpgIslandExt.txt.gz
+# DRIP-seq peaks
+phase05_real_data/drip_peaks_all.bed
+phase05_real_data/drip_peaks_alt0.bed.gz
+# Old phase05 parquet (superseded by phase0d_multi/features_master.parquet)
+phase05_real_data/features_chr21.parquet
+
+# ── Large prediction / output files ───────────────────────────────────────────
+# phase05 outputs
+phase05_real_data/*.bedGraph
+phase05_real_data/*.bed
+# phase0d genome-wide bedGraphs and high-conf BEDs
+phase0d_multi/*.bedGraph
+phase0d_multi/*_highconf.bed
+
+# ── Runtime job outputs ───────────────────────────────────────────────────────
+data/jobs/
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+*.swp
+.idea/
+.vscode/
