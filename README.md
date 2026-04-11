@@ -8,9 +8,9 @@ A web application for training machine learning models to classify genomic featu
 
 Certain DNA sequence features — R-loops, G-quadruplexes, CpG islands — play important roles in gene regulation, genome stability, and disease. Experimentally mapping these features genome-wide is expensive. This portal lets researchers train classifiers on existing label sets and predict feature locations across entire chromosomes using only primary sequence composition, requiring no experimental data beyond the labels themselves.
 
-### Phase 0 — Validated baseline (chr21, hg38)
+### Validated baseline (chr21, hg38)
 
-Three classifiers were trained and validated on chromosome 21:
+Three classifiers were trained and validated on chromosome 21. See [research/](research/) for detailed plots and analysis.
 
 | Feature | Description | Best AUC |
 |---------|-------------|----------|
@@ -18,7 +18,7 @@ Three classifiers were trained and validated on chromosome 21:
 | G4 | G-quadruplex-forming motifs | **0.978** |
 | CpG | CpG islands (Gardiner-Garden criteria) | **0.933** |
 
-Models: XGBoost (500 trees, depth 8) and Random Forest (500 trees, depth 12), trained on 51 sequence features computed from 200 bp non-overlapping windows. Pre-computed predictions are in `phase0d_multi/`.
+Models: XGBoost (500 trees, depth 8) and Random Forest (500 trees, depth 12), trained on 52 sequence features computed from 200 bp non-overlapping windows.
 
 ---
 
@@ -44,8 +44,7 @@ Models: XGBoost (500 trees, depth 8) and Random Forest (500 trees, depth 12), tr
 └─────────────────────┘  └──────────────────────────┘
                                    │
                     ┌──────────────▼──────────────────┐
-                    │  phase0d_multi/                  │
-                    │  features_master.parquet         │
+                    │  data/features_master.parquet    │
                     │  (200,451 windows × 52 features) │
                     └─────────────────────────────────┘
 ```
@@ -89,6 +88,7 @@ MLGenomics/
 │   │   ├── App.tsx                # Routes + job list
 │   │   ├── api/client.ts          # Typed axios wrappers
 │   │   ├── components/
+│   │   │   ├── Nav.tsx            # Fixed top navigation bar
 │   │   │   ├── BedUpload.tsx      # Drag-and-drop BED input
 │   │   │   ├── FeatureSelector.tsx # Grouped feature checkboxes
 │   │   │   ├── ModelPicker.tsx    # Model + hyperparameter UI
@@ -99,13 +99,14 @@ MLGenomics/
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── package.json
-├── phase0d_multi/                 # Phase 0 outputs (read-only at runtime)
+├── data/
 │   ├── features_master.parquet    # Pre-computed feature matrix (200k windows)
-│   └── pred_*.bedGraph            # Baseline predictions for RLFS / G4 / CpG
-├── phase05_real_data/             # Reference genome data
-│   └── chr21.fa                   # hg38 chromosome 21 sequence
-├── data/jobs/                     # Training job outputs (created at runtime)
-├── phase0d_multi_feature.py       # Phase 0 pipeline script
+│   └── jobs/                      # Training job outputs (created at runtime)
+├── research/
+│   ├── README.md                  # Graph descriptions and analysis notes
+│   ├── phase0d_comparison.png     # ROC / PR / CV comparison across all tasks
+│   ├── phase0d_details.png        # Per-task confusion matrix, importances, score dist
+│   └── phase05_real_results.png   # Early DRIP-seq prototype results
 ├── docker-compose.yml
 └── CLAUDE.md
 ```
@@ -133,7 +134,7 @@ docker compose up --build
 **Prerequisites:** Python 3.12, Node.js 20, a running Redis instance.
 
 ```bash
-# Start Redis (or use a local installation)
+# Start Redis
 docker run -d -p 6379:6379 redis:7-alpine
 
 # Backend
@@ -142,19 +143,12 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 
 # Celery worker (new terminal, same directory)
-cd backend
 celery -A celery_app.celery worker --loglevel=info --concurrency=2
 
 # Frontend (new terminal)
 cd frontend
 npm install
 npm run dev          # http://localhost:5173
-```
-
-To point at a non-default Redis, set the environment variable before starting:
-
-```bash
-export REDIS_URL=redis://myhost:6379/0
 ```
 
 ---
@@ -171,9 +165,8 @@ chr21   15400   15600
 chr21   31000   31400
 ```
 
-- Must be tab-separated, BED3 or wider format.
-- Coordinates must be on `chr21` (hg38). Other chromosomes are ignored at this stage.
-- You can use the baseline predictions in `phase0d_multi/pred_*_highconf.bed` as label files to reproduce the Phase 0 results.
+- Tab-separated, BED3 or wider format, max 50 MB.
+- Coordinates must be on `chr21` (hg38).
 - Isolation Forest mode does not need a BED file — it detects sequence anomalies without labels.
 
 ### 2. Submit a job
@@ -181,10 +174,10 @@ chr21   31000   31400
 Open http://localhost:5173 and click **+ New Job**, then follow the three-step wizard:
 
 **Step 1 — Upload labels**
-Drop your BED file onto the upload area. Set the Neg:Pos ratio (default 3) to control class balance during training.
+Drop your BED file onto the upload area. Set the Neg:Pos ratio (default 3) to control class balance.
 
 **Step 2 — Select features**
-Features are organised into eight groups. Toggle individual features or whole groups. Deselecting irrelevant groups (e.g. G-quadruplex features for a CpG classifier) can speed up training and reduce overfitting.
+Features are organised into nine groups. Toggle individual features or whole groups.
 
 | Group | Features |
 |-------|----------|
@@ -206,28 +199,20 @@ Features are organised into eight groups. Toggle individual features or whole gr
 | Random Forest | Fast; robust to noisy labels |
 | Isolation Forest | No labels needed; detects sequence anomalies |
 
-Click **Train model** to submit. The job is dispatched to the Celery worker immediately.
-
 ### 3. View results
 
-The results page polls the job every 2 seconds. Once complete it shows:
+Once complete the results page shows:
 
 - **ROC-AUC** and **Average Precision** on the held-out test set (20%)
 - **5-fold cross-validation AUC ± std**
-- Positive / negative window counts
-- High-confidence region count (probability ≥ 0.5)
+- Positive / negative window counts and high-confidence region count
 - Feature importance bar chart (top 15 features)
 
 ### 4. Export predictions
 
-Click **Download BedGraph** to get the full genome-wide prediction file. Load it in [IGV](https://igv.org/) or the [UCSC Genome Browser](https://genome.ucsc.edu/):
+Click **Download BedGraph** to get the full genome-wide prediction file. Load it in [IGV](https://igv.org/) or the [UCSC Genome Browser](https://genome.ucsc.edu/).
 
-```
-# IGV: File → Load from File → predictions_<id>.bedGraph
-# UCSC: My Data → Custom Tracks → paste the bedGraph
-```
-
-The file contains one row per 200 bp window across chr21 with a probability score (0–1). A companion high-confidence BED file (`data/jobs/<id>/highconf.bed`) lists only windows scoring ≥ 0.5.
+The file contains one row per 200 bp window across chr21 with a probability score (0–1). A companion `highconf.bed` file lists only windows scoring ≥ 0.5.
 
 ---
 
@@ -235,87 +220,44 @@ The file contains one row per 200 bp window across chr21 with a probability scor
 
 All endpoints are under `/api`. Interactive docs at `/docs`.
 
-### `GET /api/chromosomes`
-Lists available chromosomes and whether a pre-computed feature matrix exists.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/chromosomes` | List available chromosomes |
+| GET | `/api/features` | All 52 feature names with group and description |
+| POST | `/api/jobs` | Submit a training job (multipart: `config` + `bed_file`) |
+| GET | `/api/jobs` | List all jobs, newest first |
+| GET | `/api/jobs/{id}` | Job detail: status, progress, metrics, feature importances |
+| GET | `/api/jobs/{id}/export` | Stream BedGraph file as download |
+| DELETE | `/api/jobs/{id}` | Remove job and output files |
 
-```json
-[{"name": "chr21", "parquet_available": true, "n_windows": 200451}]
-```
-
-### `GET /api/features`
-Returns all 52 feature names with group and description.
-
-### `POST /api/jobs`
-Submit a training job. Multipart form with two fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `config` | JSON string | `TrainRequest` object (see below) |
-| `bed_file` | file | BED file (optional for Isolation Forest) |
-
-**TrainRequest fields:**
+**TrainRequest (JSON `config` field):**
 
 ```json
 {
-  "chromosome":   "chr21",
-  "model_type":   "xgboost",
-  "features":     null,
-  "model_params": {"n_estimators": 500, "max_depth": 8},
-  "neg_ratio":    3,
+  "chromosome":    "chr21",
+  "model_type":    "xgboost",
+  "features":      null,
+  "model_params":  {"n_estimators": 500, "max_depth": 8},
+  "neg_ratio":     3,
   "test_fraction": 0.2
 }
 ```
 
-`features: null` uses all 52. Returns `202 Accepted` with `{"job_id": "..."}`.
-
-### `GET /api/jobs`
-List all jobs, sorted by creation time (newest first).
-
-### `GET /api/jobs/{id}`
-Full job detail including status, progress (0–1), metrics, and feature importances.
-
-**Status values:** `pending` → `running` → `completed` / `failed`
-
-```json
-{
-  "job_id": "3f2a...",
-  "status": "completed",
-  "progress": 1.0,
-  "metrics": {
-    "auc": 0.934,
-    "ap": 0.856,
-    "cv_auc_mean": 0.901,
-    "cv_auc_std": 0.012,
-    "n_positives": 4521,
-    "n_negatives": 13563,
-    "n_highconf_regions": 3102
-  },
-  "feature_importance": {"cpg_oe": 0.18, "gc_content": 0.12, ...}
-}
-```
-
-### `GET /api/jobs/{id}/export`
-Streams the BedGraph file as a download.
-
-### `DELETE /api/jobs/{id}`
-Removes the job from Redis and deletes output files from disk.
+`features: null` uses all 52.
 
 ---
 
 ## Extending to other chromosomes
 
-The portal is designed to scale. To add a chromosome:
-
-1. Add `chrN.fa` to `phase05_real_data/`.
-2. Run `phase0d_multi_feature.py` (or an adapted version) to produce a feature Parquet.
-3. Register the path in `backend/app/routers/features.py` (`_PARQUET_MAP`).
-4. Add `"chrN"` to the `validate_chrom` allowlist in `backend/app/schemas/training.py`.
+1. Compute a feature matrix Parquet for the new chromosome (200 bp windows, same 52 features).
+2. Place it in `data/` and register the path in `backend/app/routers/features.py` (`_PARQUET_MAP`).
+3. Add the chromosome name to the allowlist in `backend/app/schemas/training.py`.
 
 ---
 
 ## Development notes
 
-- Job metadata is stored in Redis with a 24-hour TTL. Output files live in `data/jobs/<uuid>/`.
-- The Celery worker and the API server both mount the same `phase0d_multi/` and `data/jobs/` directories — keep them on a shared volume in any multi-host deployment.
-- The backend uses `PYTHONPATH=.` (the `backend/` directory), so imports are rooted there.
-- To run the worker with more parallelism: `--concurrency=4` (memory-bound; each job loads the 200k-row Parquet).
+- Job metadata lives in Redis (AOF persistence enabled) with a 24-hour TTL.
+- Trained models are saved to `data/jobs/<uuid>/model.joblib` alongside the BedGraph output.
+- The Celery worker and API server share the `data/` directory via bind mount.
+- Worker parallelism: `--concurrency=4` (memory-bound; each job loads the 200k-row Parquet).
