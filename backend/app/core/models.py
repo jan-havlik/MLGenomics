@@ -66,12 +66,14 @@ def train_isolation_forest(
     Unsupervised anomaly detection — no labels required.
     Returns (model, None, None) so the caller gets consistent shape.
     """
+    _ISOFOREST_PARAMS = {"n_estimators", "contamination", "max_samples",
+                         "max_features", "bootstrap", "random_state", "n_jobs"}
     defaults = dict(
         n_estimators=500, contamination=0.1,
         random_state=RANDOM_STATE, n_jobs=-1,
     )
     if params:
-        defaults.update(params)
+        defaults.update({k: v for k, v in params.items() if k in _ISOFOREST_PARAMS})
     model = IsolationForest(**defaults)
     model.fit(X_all)
     return model, None, None

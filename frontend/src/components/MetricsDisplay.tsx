@@ -6,15 +6,19 @@ interface Props {
   featureImportance: Record<string, number> | null;
 }
 
-const badge = (label: string, value: string, color: string) => (
-  <div style={{
-    background: "#1e293b", border: `1px solid ${color}`,
-    borderRadius: 8, padding: "12px 20px", textAlign: "center", minWidth: 130,
-  }}>
-    <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>{label}</div>
-    <div style={{ fontSize: 28, fontWeight: 700, color }}>{value}</div>
-  </div>
-);
+function Badge({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{
+      background: "#0f172a", border: `1px solid ${color}22`,
+      borderRadius: 12, padding: "18px 24px", textAlign: "center", flex: 1, minWidth: 120,
+    }}>
+      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 30, fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
+    </div>
+  );
+}
 
 export default function MetricsDisplay({ metrics, featureImportance }: Props) {
   const top15 = featureImportance
@@ -27,39 +31,66 @@ export default function MetricsDisplay({ metrics, featureImportance }: Props) {
   return (
     <div>
       {/* Score badges */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
-        {metrics.auc !== null && badge("ROC-AUC", metrics.auc.toFixed(3), "#38bdf8")}
-        {metrics.ap !== null && badge("Avg Precision", metrics.ap.toFixed(3), "#34d399")}
-        {badge("CV AUC", `${metrics.cv_auc_mean.toFixed(3)} ±${metrics.cv_auc_std.toFixed(3)}`, "#a78bfa")}
-        {badge("Positives", metrics.n_positives.toLocaleString(), "#fb923c")}
-        {badge("Negatives", metrics.n_negatives.toLocaleString(), "#64748b")}
-        {badge("High-conf regions", metrics.n_highconf_regions.toLocaleString(), "#f472b6")}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 32 }}>
+        {metrics.auc != null && <Badge label="ROC-AUC" value={metrics.auc.toFixed(3)} color="#38bdf8" />}
+        {metrics.ap != null && <Badge label="Avg Precision" value={metrics.ap.toFixed(3)} color="#34d399" />}
+        {metrics.cv_auc_mean != null && (
+          <Badge
+            label="CV AUC (5-fold)"
+            value={`${metrics.cv_auc_mean.toFixed(3)} ±${(metrics.cv_auc_std ?? 0).toFixed(3)}`}
+            color="#a78bfa"
+          />
+        )}
+        <Badge label="Positives" value={(metrics.n_positives ?? 0).toLocaleString()} color="#fb923c" />
+        <Badge label="Negatives" value={(metrics.n_negatives ?? 0).toLocaleString()} color="#64748b" />
+        {metrics.n_highconf_regions != null && (
+          <Badge label="High-conf regions" value={metrics.n_highconf_regions.toLocaleString()} color="#f472b6" />
+        )}
       </div>
 
       {/* Feature importance */}
       {top15.length > 0 && (
         <div>
-          <h3 style={{ color: "#cbd5e1", marginBottom: 12, fontWeight: 600, fontSize: 14 }}>
-            Feature Importance (top 15)
-          </h3>
-          <ResponsiveContainer width="100%" height={300}>
+          <div style={{
+            fontSize: 12, fontWeight: 600, color: "#64748b",
+            textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16,
+          }}>
+            Feature Importance — top 15
+          </div>
+          <ResponsiveContainer width="100%" height={340}>
             <BarChart
               data={top15}
               layout="vertical"
-              margin={{ left: 120, right: 20, top: 0, bottom: 0 }}
+              margin={{ left: 10, right: 24, top: 0, bottom: 0 }}
             >
-              <XAxis type="number" tick={{ fill: "#64748b", fontSize: 11 }} unit="%" />
+              <XAxis
+                type="number"
+                tick={{ fill: "#64748b", fontSize: 12 }}
+                unit="%"
+                axisLine={{ stroke: "#1e293b" }}
+                tickLine={false}
+              />
               <YAxis
-                type="category" dataKey="name"
-                tick={{ fill: "#94a3b8", fontSize: 11 }} width={115}
+                type="category"
+                dataKey="name"
+                tick={{ fill: "#e2e8f0", fontSize: 12 }}
+                width={145}
+                axisLine={false}
+                tickLine={false}
               />
               <Tooltip
+                cursor={{ fill: "rgba(255,255,255,0.04)" }}
                 formatter={(v: number) => [`${v}%`, "Importance"]}
-                contentStyle={{ background: "#1e293b", border: "1px solid #334155", fontSize: 12 }}
+                contentStyle={{
+                  background: "#0f172a", border: "1px solid #334155",
+                  borderRadius: 8, fontSize: 13, color: "#e2e8f0",
+                }}
+                labelStyle={{ color: "#e2e8f0", marginBottom: 4 }}
+                itemStyle={{ color: "#94a3b8" }}
               />
-              <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+              <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={22}>
                 {top15.map((_, i) => (
-                  <Cell key={i} fill={`hsl(${200 + i * 8}, 70%, 55%)`} />
+                  <Cell key={i} fill={`hsl(${200 + i * 9}, 65%, 58%)`} />
                 ))}
               </Bar>
             </BarChart>

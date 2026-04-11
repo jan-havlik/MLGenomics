@@ -165,14 +165,29 @@ def train_model(
         _update_job(r, job_id, {"progress": 0.85})
 
         # ── 8. Write output files ─────────────────────────────────────────────
+        import joblib
+        import json as _json
+
         job_dir = settings.jobs_dir / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
 
         bg_path = job_dir / "predictions.bedGraph"
         hc_path = job_dir / "highconf.bed"
+        model_path = job_dir / "model.joblib"
+        meta_path = job_dir / "model_meta.json"
 
         write_bedgraph(df, probs, chromosome, bg_path, track_name=f"job_{job_id[:8]}")
         n_hc = write_highconf_bed(df, probs, chromosome, hc_path, track_name=f"job_{job_id[:8]}")
+
+        # Save model + feature list so predictions can be reproduced later
+        joblib.dump(model, model_path)
+        with open(meta_path, "w") as f:
+            _json.dump({
+                "job_id": job_id,
+                "model_type": model_type,
+                "chromosome": chromosome,
+                "feature_cols": feature_cols,
+            }, f, indent=2)
 
         # ── 9. Persist results ────────────────────────────────────────────────
         metrics = {

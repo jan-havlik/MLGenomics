@@ -3,11 +3,24 @@ import { useParams, Link } from "react-router-dom";
 import { fetchJob, JobStatus, exportUrl } from "../api/client";
 import MetricsDisplay from "../components/MetricsDisplay";
 
-const statusColor: Record<string, string> = {
-  pending: "#f59e0b",
-  running: "#38bdf8",
+const STATUS_COLOR: Record<string, string> = {
+  pending:   "#f59e0b",
+  running:   "#38bdf8",
   completed: "#34d399",
-  failed: "#f87171",
+  failed:    "#f87171",
+};
+
+const STATUS_BG: Record<string, string> = {
+  pending:   "rgba(245,158,11,0.1)",
+  running:   "rgba(56,189,248,0.1)",
+  completed: "rgba(52,211,153,0.1)",
+  failed:    "rgba(248,113,113,0.1)",
+};
+
+const MODEL_LABEL: Record<string, string> = {
+  xgboost:          "XGBoost",
+  random_forest:    "Random Forest",
+  isolation_forest: "Isolation Forest",
 };
 
 export default function JobResults() {
@@ -18,7 +31,6 @@ export default function JobResults() {
 
   useEffect(() => {
     if (!jobId) return;
-
     const load = async () => {
       try {
         const data = await fetchJob(jobId);
@@ -31,61 +43,69 @@ export default function JobResults() {
         if (intervalRef.current) clearInterval(intervalRef.current);
       }
     };
-
     load();
     intervalRef.current = setInterval(load, 2000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [jobId]);
 
-  if (error) return <div style={{ padding: "2rem", color: "#f87171" }}>{error}</div>;
-  if (!job) return <div style={{ padding: "2rem", color: "#64748b" }}>Loading…</div>;
+  if (error) return (
+    <div style={{ padding: "3rem 2rem", color: "#f87171", fontSize: 15 }}>{error}</div>
+  );
+  if (!job) return (
+    <div style={{ padding: "3rem 2rem", color: "#64748b", fontSize: 15 }}>Loading…</div>
+  );
 
   const isRunning = job.status === "pending" || job.status === "running";
+  const color = STATUS_COLOR[job.status] || "#e2e8f0";
+  const bg = STATUS_BG[job.status] || "transparent";
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: "2rem" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-        <Link to="/" style={{ color: "#64748b", textDecoration: "none", fontSize: 13 }}>
-          ← All jobs
-        </Link>
-        <span style={{ color: "#334155" }}>/</span>
-        <span style={{ color: "#94a3b8", fontSize: 13, fontFamily: "monospace" }}>
-          {job.job_id.slice(0, 8)}
-        </span>
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: "3rem 2rem" }}>
+
+      {/* Breadcrumb */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 28, fontSize: 14 }}>
+        <Link to="/" style={{ color: "#64748b", textDecoration: "none" }}>Jobs</Link>
+        <span style={{ color: "#334155" }}>›</span>
+        <span style={{ color: "#94a3b8", fontFamily: "monospace" }}>{job.job_id.slice(0, 8)}</span>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 36 }}>
         <div>
-          <h1 style={{ color: "#e2e8f0", margin: 0, fontSize: 22 }}>
-            {job.model_type.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+          <h1 style={{ fontSize: 32, fontWeight: 700, color: "#e2e8f0", margin: "0 0 8px", letterSpacing: "-0.5px" }}>
+            {MODEL_LABEL[job.model_type] ?? job.model_type}
           </h1>
-          <div style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>
-            {job.chromosome} · created {new Date(job.created_at).toLocaleString()}
+          <div style={{ fontSize: 14, color: "#64748b" }}>
+            {job.chromosome} · {new Date(job.created_at).toLocaleString()}
           </div>
         </div>
-        <span style={{
-          padding: "4px 12px", borderRadius: 20, fontSize: 13, fontWeight: 600,
-          color: statusColor[job.status] || "#e2e8f0",
-          border: `1px solid ${statusColor[job.status] || "#334155"}`,
+        <div style={{
+          padding: "8px 20px", borderRadius: 24,
+          background: bg, border: `1px solid ${color}`,
+          fontSize: 14, fontWeight: 700, color,
         }}>
           {job.status}
-        </span>
+        </div>
       </div>
 
       {/* Progress bar */}
       {isRunning && (
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ height: 6, background: "#1e293b", borderRadius: 3, overflow: "hidden" }}>
-            <div style={{
-              height: "100%",
-              width: `${Math.round(job.progress * 100)}%`,
-              background: "#38bdf8",
-              transition: "width 0.4s ease",
-              borderRadius: 3,
-            }} />
+        <div style={{
+          background: "#1e293b", borderRadius: 16, border: "1px solid #334155",
+          padding: "24px 28px", marginBottom: 32,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+            <span style={{ color: "#94a3b8", fontSize: 14 }}>Training in progress…</span>
+            <span style={{ color: "#38bdf8", fontSize: 14, fontWeight: 600 }}>
+              {Math.round(job.progress * 100)}%
+            </span>
           </div>
-          <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>
-            {Math.round(job.progress * 100)}% — training in progress…
+          <div style={{ height: 8, background: "#0f172a", borderRadius: 4, overflow: "hidden" }}>
+            <div style={{
+              height: "100%", width: `${Math.round(job.progress * 100)}%`,
+              background: "linear-gradient(90deg, #0284c7, #38bdf8)",
+              borderRadius: 4, transition: "width 0.4s ease",
+            }} />
           </div>
         </div>
       )}
@@ -93,8 +113,8 @@ export default function JobResults() {
       {/* Error */}
       {job.status === "failed" && job.error && (
         <div style={{
-          background: "#2d1515", border: "1px solid #7f1d1d",
-          borderRadius: 8, padding: 16, color: "#f87171", fontSize: 13, marginBottom: 24,
+          background: "rgba(248,113,113,0.08)", border: "1px solid #f87171",
+          borderRadius: 12, padding: "20px 24px", color: "#f87171", fontSize: 14, marginBottom: 32,
         }}>
           {job.error}
         </div>
@@ -103,22 +123,42 @@ export default function JobResults() {
       {/* Results */}
       {job.status === "completed" && job.metrics && (
         <div>
-          <MetricsDisplay metrics={job.metrics} featureImportance={job.feature_importance} />
-          <div style={{ marginTop: 28 }}>
+          {/* Metrics card */}
+          <div style={{
+            background: "#1e293b", borderRadius: 16, border: "1px solid #334155",
+            padding: "28px 32px", marginBottom: 24,
+          }}>
+            <h2 style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8", margin: "0 0 24px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Results
+            </h2>
+            <MetricsDisplay metrics={job.metrics} featureImportance={job.feature_importance} />
+          </div>
+
+          {/* Export */}
+          <div style={{
+            background: "#1e293b", borderRadius: 16, border: "1px solid #334155",
+            padding: "24px 32px", display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>
+                Export predictions
+              </div>
+              <div style={{ fontSize: 14, color: "#64748b" }}>
+                {job.metrics.n_highconf_regions.toLocaleString()} high-confidence regions · bedGraph format
+              </div>
+            </div>
             <a
               href={exportUrl(job.job_id)}
               download
               style={{
-                display: "inline-block", padding: "10px 24px",
-                background: "#0f766e", borderRadius: 8, color: "#e2e8f0",
-                textDecoration: "none", fontSize: 14, fontWeight: 600,
+                padding: "12px 28px", background: "#0f766e",
+                borderRadius: 10, color: "#e2e8f0",
+                textDecoration: "none", fontSize: 15, fontWeight: 600,
+                whiteSpace: "nowrap",
               }}
             >
               Download BedGraph
             </a>
-            <span style={{ marginLeft: 12, color: "#64748b", fontSize: 12 }}>
-              {job.metrics.n_highconf_regions.toLocaleString()} high-confidence regions
-            </span>
           </div>
         </div>
       )}

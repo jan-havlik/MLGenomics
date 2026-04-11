@@ -62,11 +62,9 @@ export default function BedUpload({ file, onChange, optional }: Props) {
           <div style={{ color: "#94a3b8", fontSize: 14 }}>
             Drop a BED file here or click to browse
           </div>
-          {optional && (
-            <div style={{ color: "#475569", fontSize: 12, marginTop: 4 }}>
-              Optional for Isolation Forest
-            </div>
-          )}
+          <div style={{ color: "#475569", fontSize: 12, marginTop: 6 }}>
+            {optional ? "Optional for Isolation Forest · " : ""}BED3+ format · max 50 MB
+          </div>
         </div>
       )}
     </div>
