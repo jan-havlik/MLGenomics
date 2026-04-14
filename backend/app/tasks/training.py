@@ -131,7 +131,7 @@ def train_model(
             df["_label"] = labels
 
             n_total_pos = int(labels.sum())
-            if n_total_pos < 50:
+            if n_total_pos < 10:
                 raise ValueError(
                     f"Too few positive windows ({n_total_pos}) after BED labeling. "
                     "Check that your BED file uses the same chromosome as the parquet."

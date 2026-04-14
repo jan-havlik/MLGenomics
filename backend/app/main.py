@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import features, jobs, train
+from app.routers import features, jobs, train, library
 
 app = FastAPI(
     title="Genomics ML Portal",
@@ -20,6 +20,7 @@ app.add_middleware(
 app.include_router(features.router)
 app.include_router(jobs.router)
 app.include_router(train.router)
+app.include_router(library.router)
 
 
 @app.get("/health")

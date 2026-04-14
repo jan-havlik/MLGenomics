@@ -23,7 +23,7 @@ export default function Nav() {
 
       {/* Nav links */}
       <div style={{ display: "flex", gap: 4, flex: 1 }}>
-        {[{ to: "/", label: "Jobs" }, { to: "/new", label: "New Job" }].map(({ to, label }) => {
+        {[{ to: "/", label: "Jobs" }, { to: "/library", label: "Library" }, { to: "/new", label: "New Job" }].map(({ to, label }) => {
           const active = to === "/" ? pathname === "/" : pathname.startsWith(to);
           return (
             <Link key={to} to={to} style={{

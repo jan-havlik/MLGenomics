@@ -1,13 +1,12 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
-_REPO_ROOT = Path(__file__).parent.parent.parent
-
 
 class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
-    parquet_dir: Path = _REPO_ROOT / "data"
-    jobs_dir: Path = _REPO_ROOT / "data" / "jobs"
+    parquet_dir: Path = Path("/data")
+    jobs_dir: Path = Path("/data/jobs")
+    library_dir: Path = Path("/data/library")
     job_ttl_seconds: int = 86400  # 24 h
 
     class Config:
@@ -17,3 +16,4 @@ class Settings(BaseSettings):
 
 settings = Settings()
 settings.jobs_dir.mkdir(parents=True, exist_ok=True)
+settings.library_dir.mkdir(parents=True, exist_ok=True)

@@ -4,6 +4,7 @@ import { fetchJobs, deleteJob, JobListItem } from "./api/client";
 import Nav from "./components/Nav";
 import NewJob from "./pages/NewJob";
 import JobResults from "./pages/JobResults";
+import Library from "./pages/Library";
 
 // ── Error boundary ────────────────────────────────────────────────────────────
 class ErrorBoundary extends Component<
@@ -217,6 +218,7 @@ export default function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<JobList />} />
+          <Route path="/library" element={<Library />} />
           <Route path="/new" element={<NewJob />} />
           <Route path="/jobs/:jobId" element={<ErrorBoundary><JobResults /></ErrorBoundary>} />
         </Routes>

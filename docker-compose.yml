@@ -14,34 +14,38 @@ services:
 
   api:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./data:/data/data
+      - jobs_data:/data/jobs
+      - library_data:/data/library
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - PARQUET_DIR=/data/data
-      - JOBS_DIR=/data/data/jobs
+      - PARQUET_DIR=/data
+      - JOBS_DIR=/data/jobs
+      - LIBRARY_DIR=/data/library
     depends_on:
       redis:
         condition: service_healthy
 
   worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     command: celery -A celery_app.celery worker --loglevel=info --concurrency=2
     volumes:
       - ./backend:/app
-      - ./data:/data/data
+      - jobs_data:/data/jobs
+      - library_data:/data/library
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - PARQUET_DIR=/data/data
-      - JOBS_DIR=/data/data/jobs
+      - PARQUET_DIR=/data
+      - JOBS_DIR=/data/jobs
+      - LIBRARY_DIR=/data/library
     depends_on:
       redis:
         condition: service_healthy
@@ -57,3 +61,5 @@ services:
 
 volumes:
   redis_data:
+  jobs_data:
+  library_data:

@@ -80,3 +80,66 @@ export const deleteJob = (jobId: string): Promise<void> =>
   api.delete(`/jobs/${jobId}`).then(() => undefined);
 
 export const exportUrl = (jobId: string) => `/api/jobs/${jobId}/export`;
+
+// ---------------------------------------------------------------------------
+// Model library
+// ---------------------------------------------------------------------------
+
+export interface LibraryModelInfo {
+  name: string;
+  display_name: string;
+  description: string;
+  model_type: string;
+  chromosome: string;
+  auc: number | null;
+  ap: number | null;
+  n_features: number;
+  feature_cols: string[];
+  tags: string[];
+  created_at: string;
+}
+
+export interface SaveToLibraryRequest {
+  name: string;
+  display_name: string;
+  description?: string;
+  tags?: string[];
+}
+
+export interface PatchLibraryRequest {
+  display_name?: string;
+  description?: string;
+  tags?: string[];
+}
+
+export const saveToLibrary = (
+  jobId: string,
+  req: SaveToLibraryRequest
+): Promise<LibraryModelInfo> =>
+  api.post<LibraryModelInfo>(`/jobs/${jobId}/save`, req).then((r) => r.data);
+
+export const fetchLibrary = (): Promise<LibraryModelInfo[]> =>
+  api.get<LibraryModelInfo[]>("/library").then((r) => r.data);
+
+export const getLibraryModel = (name: string): Promise<LibraryModelInfo> =>
+  api.get<LibraryModelInfo>(`/library/${name}`).then((r) => r.data);
+
+export const patchLibraryModel = (
+  name: string,
+  req: PatchLibraryRequest
+): Promise<LibraryModelInfo> =>
+  api.patch<LibraryModelInfo>(`/library/${name}`, req).then((r) => r.data);
+
+export const deleteLibraryModel = (name: string): Promise<void> =>
+  api.delete(`/library/${name}`).then(() => undefined);
+
+export const exportLibraryUrl = (name: string) => `/api/library/${name}/export`;
+
+export const importLibraryModel = (zipFile: File): Promise<LibraryModelInfo> => {
+  const form = new FormData();
+  form.append("file", zipFile);
+  return api.post<LibraryModelInfo>("/library/import", form).then((r) => r.data);
+};
+
+export const runLibraryPredict = (name: string): Promise<{ job_id: string }> =>
+  api.post<{ job_id: string }>(`/library/${name}/predict`).then((r) => r.data);
