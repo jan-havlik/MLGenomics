@@ -50,12 +50,16 @@ services:
       redis:
         condition: service_healthy
 
+  # Frontend dev server — hot reload for local development only.
+  # In production the React build is served directly by the API (see main.py).
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
       - "5173:80"
+    profiles:
+      - dev
     depends_on:
       - api
 
