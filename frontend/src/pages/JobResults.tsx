@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { fetchJob, JobStatus, exportUrl, saveToLibrary, SaveToLibraryRequest } from "../api/client";
 import MetricsDisplay from "../components/MetricsDisplay";
+import IgvViewer from "../components/IgvViewer";
 
 const STATUS_COLOR: Record<string, string> = {
   pending:   "#f59e0b",
@@ -275,6 +276,9 @@ export default function JobResults() {
       {/* Results */}
       {job.status === "completed" && job.metrics && (
         <div>
+          {/* Genome browser */}
+          <IgvViewer jobId={job.job_id} chromosome={job.chromosome} />
+
           {/* Metrics card */}
           <div style={{
             background: "#1e293b", borderRadius: 16, border: "1px solid #334155",

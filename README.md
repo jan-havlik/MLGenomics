@@ -2,6 +2,8 @@
 
 A web application for training machine learning models to classify genomic features across the human genome. Scientists upload BED label files, select sequence features, choose a model, and receive genome-wide predictions as BedGraph files ready for genome browsers.
 
+**Live demo: [mlgenomics.up.railway.app](https://mlgenomics.up.railway.app)**
+
 ---
 
 ## Background
@@ -115,6 +117,8 @@ MLGenomics/
 
 ## Quickstart
 
+**Live demo:** [mlgenomics.up.railway.app](https://mlgenomics.up.railway.app)
+
 ### With Docker (recommended)
 
 Requires [Docker](https://docs.docker.com/get-docker/) with Compose V2.
@@ -125,9 +129,10 @@ docker compose up --build
 
 | Service | URL |
 |---------|-----|
-| Web UI | http://localhost:5173 |
-| API | http://localhost:8000 |
+| Web UI + API | http://localhost:8000 |
 | API docs | http://localhost:8000/docs |
+
+The React frontend is served directly by the API on port 8000. There is no separate frontend port in production mode.
 
 ### Without Docker (development)
 
@@ -137,19 +142,25 @@ docker compose up --build
 # Start Redis
 docker run -d -p 6379:6379 redis:7-alpine
 
-# Backend
+# Backend (port 8000)
 cd backend
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 
-# Celery worker (new terminal, same directory)
+# Celery worker (new terminal, same backend directory)
 celery -A celery_app.celery worker --loglevel=info --concurrency=2
 
-# Frontend (new terminal)
+# Frontend dev server with hot reload (new terminal)
 cd frontend
 npm install
-npm run dev          # http://localhost:5173
+npm run dev          # http://localhost:5173 → proxies /api to port 8000
 ```
+
+| Service | URL |
+|---------|-----|
+| Frontend (hot reload) | http://localhost:5173 |
+| API | http://localhost:8000 |
+| API docs | http://localhost:8000/docs |
 
 ---
 
@@ -207,12 +218,13 @@ Once complete the results page shows:
 - **5-fold cross-validation AUC ± std**
 - Positive / negative window counts and high-confidence region count
 - Feature importance bar chart (top 15 features)
+- **Embedded genome browser** (IGV.js) — pan and zoom across chr21, inspect prediction scores per window directly in the app without downloading anything
 
 ### 4. Export predictions
 
-Click **Download BedGraph** to get the full genome-wide prediction file. Load it in [IGV](https://igv.org/) or the [UCSC Genome Browser](https://genome.ucsc.edu/).
+Click **Download BedGraph** to get the full genome-wide prediction file. The file contains one row per 200 bp window across chr21 with a probability score (0–1). A companion `highconf.bed` file lists only windows scoring ≥ 0.5.
 
-The file contains one row per 200 bp window across chr21 with a probability score (0–1). A companion `highconf.bed` file lists only windows scoring ≥ 0.5.
+The BedGraph can also be loaded externally in [IGV Desktop](https://igv.org/) or the [UCSC Genome Browser](https://genome.ucsc.edu/) for more advanced visualisation options.
 
 ---
 
