@@ -21,10 +21,9 @@ def train_xgboost(
     params: dict | None = None,
 ) -> tuple:
     defaults = dict(
-        n_estimators=300, max_depth=6, learning_rate=0.05,
+        n_estimators=500, max_depth=8, learning_rate=0.05,
         subsample=0.8, colsample_bytree=0.7, min_child_weight=3,
         reg_alpha=0.1, reg_lambda=1.0,
-        early_stopping_rounds=20,
         random_state=RANDOM_STATE, eval_metric="logloss",
     )
     if params:
@@ -45,7 +44,7 @@ def train_random_forest(
     params: dict | None = None,
 ) -> tuple:
     defaults = dict(
-        n_estimators=150, max_depth=8, min_samples_leaf=3,
+        n_estimators=500, max_depth=12, min_samples_leaf=3,
         random_state=RANDOM_STATE, n_jobs=1,
     )
     if params:
@@ -69,7 +68,7 @@ def train_isolation_forest(
     _ISOFOREST_PARAMS = {"n_estimators", "contamination", "max_samples",
                          "max_features", "bootstrap", "random_state", "n_jobs"}
     defaults = dict(
-        n_estimators=150, contamination=0.1,
+        n_estimators=500, contamination=0.1,
         random_state=RANDOM_STATE, n_jobs=1,
     )
     if params:
@@ -81,7 +80,7 @@ def train_isolation_forest(
 
 def run_cv(X: np.ndarray, y: np.ndarray, params: dict | None = None) -> np.ndarray:
     cv_params = dict(
-        n_estimators=150, max_depth=6, learning_rate=0.05,
+        n_estimators=300, max_depth=8, learning_rate=0.05,
         random_state=RANDOM_STATE, eval_metric="logloss",
     )
     if params:
