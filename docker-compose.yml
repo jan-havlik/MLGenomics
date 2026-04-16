@@ -37,7 +37,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    command: celery -A celery_app.celery worker --loglevel=info --concurrency=2
+    command: celery -A celery_app.celery worker --loglevel=info --concurrency=1 --max-tasks-per-child=1
     volumes:
       - ./backend:/app
       - ./data:/app/data:ro

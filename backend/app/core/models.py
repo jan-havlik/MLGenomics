@@ -46,7 +46,7 @@ def train_random_forest(
 ) -> tuple:
     defaults = dict(
         n_estimators=500, max_depth=12, min_samples_leaf=3,
-        random_state=RANDOM_STATE, n_jobs=-1,
+        random_state=RANDOM_STATE, n_jobs=1,
     )
     if params:
         defaults.update(params)
@@ -70,7 +70,7 @@ def train_isolation_forest(
                          "max_features", "bootstrap", "random_state", "n_jobs"}
     defaults = dict(
         n_estimators=500, contamination=0.1,
-        random_state=RANDOM_STATE, n_jobs=-1,
+        random_state=RANDOM_STATE, n_jobs=1,
     )
     if params:
         defaults.update({k: v for k, v in params.items() if k in _ISOFOREST_PARAMS})
@@ -90,7 +90,7 @@ def run_cv(X: np.ndarray, y: np.ndarray, params: dict | None = None) -> np.ndarr
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
     scores = cross_val_score(
         XGBClassifier(**cv_params), X, y,
-        cv=cv, scoring="roc_auc", n_jobs=-1,
+        cv=cv, scoring="roc_auc", n_jobs=1,
     )
     return scores
 
