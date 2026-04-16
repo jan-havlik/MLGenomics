@@ -139,14 +139,16 @@ def train_model(
 
             _update_job(r, job_id, {"progress": 0.25})
 
-            # Extract full feature matrix for final genome-wide prediction
+            # Extract full feature matrix, then immediately free the DataFrame
             X_all = df[feature_cols].values.astype("float32")
+            del df
+            gc.collect()
 
-            # Build balanced training set, then free the DataFrame
+            # Build balanced training set from the numpy array (df already freed)
             X_tr, X_te, y_tr, y_te, X_bal, y_bal, n_pos, n_neg = balance_and_split(
-                df, feature_cols, labels, neg_ratio=neg_ratio, test_fraction=test_fraction,
+                X_all, labels, neg_ratio=neg_ratio, test_fraction=test_fraction,
             )
-            del df, labels
+            del labels
             gc.collect()
 
             _update_job(r, job_id, {"progress": 0.35})

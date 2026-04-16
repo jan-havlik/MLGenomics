@@ -5,7 +5,6 @@ Supports XGBoost, Random Forest, and Isolation Forest.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.metrics import roc_auc_score, average_precision_score
@@ -22,9 +21,10 @@ def train_xgboost(
     params: dict | None = None,
 ) -> tuple:
     defaults = dict(
-        n_estimators=500, max_depth=8, learning_rate=0.05,
+        n_estimators=300, max_depth=6, learning_rate=0.05,
         subsample=0.8, colsample_bytree=0.7, min_child_weight=3,
         reg_alpha=0.1, reg_lambda=1.0,
+        early_stopping_rounds=20,
         random_state=RANDOM_STATE, eval_metric="logloss",
     )
     if params:
@@ -45,7 +45,7 @@ def train_random_forest(
     params: dict | None = None,
 ) -> tuple:
     defaults = dict(
-        n_estimators=500, max_depth=12, min_samples_leaf=3,
+        n_estimators=150, max_depth=8, min_samples_leaf=3,
         random_state=RANDOM_STATE, n_jobs=1,
     )
     if params:
@@ -69,7 +69,7 @@ def train_isolation_forest(
     _ISOFOREST_PARAMS = {"n_estimators", "contamination", "max_samples",
                          "max_features", "bootstrap", "random_state", "n_jobs"}
     defaults = dict(
-        n_estimators=500, contamination=0.1,
+        n_estimators=150, contamination=0.1,
         random_state=RANDOM_STATE, n_jobs=1,
     )
     if params:
@@ -81,7 +81,7 @@ def train_isolation_forest(
 
 def run_cv(X: np.ndarray, y: np.ndarray, params: dict | None = None) -> np.ndarray:
     cv_params = dict(
-        n_estimators=300, max_depth=8, learning_rate=0.05,
+        n_estimators=150, max_depth=6, learning_rate=0.05,
         random_state=RANDOM_STATE, eval_metric="logloss",
     )
     if params:
@@ -96,18 +96,14 @@ def run_cv(X: np.ndarray, y: np.ndarray, params: dict | None = None) -> np.ndarr
 
 
 def balance_and_split(
-    df: pd.DataFrame,
-    feature_cols: list[str],
+    X_all: np.ndarray,
     labels: np.ndarray,
     neg_ratio: int = 3,
     test_fraction: float = 0.2,
 ) -> tuple:
-    """Balance classes and create train/test split."""
-    pos_mask = labels == 1
-    neg_mask = ~pos_mask
-
-    pos_idx = np.where(pos_mask)[0]
-    neg_idx = np.where(neg_mask)[0]
+    """Balance classes and create train/test split from pre-built float32 feature matrix."""
+    pos_idx = np.where(labels == 1)[0]
+    neg_idx = np.where(labels == 0)[0]
 
     n_neg = min(len(neg_idx), len(pos_idx) * neg_ratio)
     rng = np.random.default_rng(RANDOM_STATE)
@@ -116,13 +112,13 @@ def balance_and_split(
     bal_idx = np.concatenate([pos_idx, neg_sample])
     rng.shuffle(bal_idx)
 
-    X = df[feature_cols].values[bal_idx].astype(np.float32)
+    X = X_all[bal_idx]
     y = labels[bal_idx].astype(np.int32)
 
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=test_fraction, random_state=RANDOM_STATE, stratify=y,
     )
-    return X_tr, X_te, y_tr, y_te, X, y, int(pos_mask.sum()), n_neg
+    return X_tr, X_te, y_tr, y_te, X, y, len(pos_idx), n_neg
 
 
 def feature_importance_dict(model, feature_cols: list[str]) -> dict[str, float]:
