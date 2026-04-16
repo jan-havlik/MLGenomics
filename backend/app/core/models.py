@@ -98,24 +98,31 @@ def run_cv(X: np.ndarray, y: np.ndarray, params: dict | None = None) -> np.ndarr
 def balance_and_split(
     df: pd.DataFrame,
     feature_cols: list[str],
+    labels: np.ndarray,
     neg_ratio: int = 3,
     test_fraction: float = 0.2,
 ) -> tuple:
     """Balance classes and create train/test split."""
-    pos = df[df["_label"] == 1]
-    neg = df[df["_label"] == 0]
+    pos_mask = labels == 1
+    neg_mask = ~pos_mask
 
-    n_neg = min(len(neg), len(pos) * neg_ratio)
-    neg_s = neg.sample(n=n_neg, random_state=RANDOM_STATE)
-    bal = pd.concat([pos, neg_s]).sample(frac=1, random_state=RANDOM_STATE)
+    pos_idx = np.where(pos_mask)[0]
+    neg_idx = np.where(neg_mask)[0]
 
-    X = bal[feature_cols].values.astype(np.float32)
-    y = bal["_label"].values.astype(np.int32)
+    n_neg = min(len(neg_idx), len(pos_idx) * neg_ratio)
+    rng = np.random.default_rng(RANDOM_STATE)
+    neg_sample = rng.choice(neg_idx, size=n_neg, replace=False)
+
+    bal_idx = np.concatenate([pos_idx, neg_sample])
+    rng.shuffle(bal_idx)
+
+    X = df[feature_cols].values[bal_idx].astype(np.float32)
+    y = labels[bal_idx].astype(np.int32)
 
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=test_fraction, random_state=RANDOM_STATE, stratify=y,
     )
-    return X_tr, X_te, y_tr, y_te, X, y, len(pos), n_neg
+    return X_tr, X_te, y_tr, y_te, X, y, int(pos_mask.sum()), n_neg
 
 
 def feature_importance_dict(model, feature_cols: list[str]) -> dict[str, float]:

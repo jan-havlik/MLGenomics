@@ -2,20 +2,21 @@
 Celery training task.
 
 Flow:
-  1. Load pre-computed feature matrix (Parquet)
-  2. Parse uploaded BED file → label windows
-  3. Balance dataset + train/test split
-  4. Train model (XGBoost / RF / IsoForest) + 5-fold CV
-  5. Predict on all 200k windows
-  6. Write bedGraph + high-conf BED to disk
-  7. Persist metrics in Redis
-  8. Update job status
+  1. Load pre-computed feature matrix (Parquet) — only needed columns
+  2. Extract position arrays (start/end) for export
+  3. Parse uploaded BED file → label windows
+  4. Extract full feature matrix, then free the DataFrame
+  5. Balance dataset + train/test split
+  6. Train model (XGBoost / RF / IsoForest) + 5-fold CV
+  7. Predict on all 200k windows
+  8. Write bedGraph + high-conf BED to disk
+  9. Persist metrics in Redis
+  10. Update job status
 """
 from __future__ import annotations
 
+import gc
 import json
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -43,11 +44,11 @@ def _update_job(r: redis.Redis, job_id: str, updates: dict) -> None:
     r.setex(key, settings.job_ttl_seconds, json.dumps(current))
 
 
-def _parse_bed_labels(bed_content: str, df: pd.DataFrame) -> pd.Series:
+def _parse_bed_labels(bed_content: str, starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
     """
     Parse BED file content and label each window.
     A window is positive if it overlaps any BED region.
-    Returns a Series of 0/1 aligned to df index.
+    Returns an int32 array aligned to the window arrays.
     """
     positive_intervals: list[tuple[int, int]] = []
     for line in bed_content.splitlines():
@@ -68,17 +69,12 @@ def _parse_bed_labels(bed_content: str, df: pd.DataFrame) -> pd.Series:
     if not positive_intervals:
         raise ValueError("BED file contains no valid regions")
 
-    # Build interval membership using vectorised ops
-    starts = df["_start"].values
-    ends = df["_end"].values
-    labels = np.zeros(len(df), dtype=np.int32)
-
+    labels = np.zeros(len(starts), dtype=np.int32)
     for bed_s, bed_e in positive_intervals:
-        # Window overlaps region if window_start < bed_end AND window_end > bed_start
         overlap = (starts < bed_e) & (ends > bed_s)
         labels |= overlap.astype(np.int32)
 
-    return pd.Series(labels, index=df.index, name="_label")
+    return labels
 
 
 @celery.task(bind=True, name="tasks.train_model")
@@ -99,36 +95,40 @@ def train_model(
         neg_ratio = config.get("neg_ratio", 3)
         test_fraction = config.get("test_fraction", 0.2)
 
-        # ── 1. Load feature matrix ────────────────────────────────────────────
-        parquet_path = settings.parquet_dir / "features_master.parquet"
-        df = pd.read_parquet(parquet_path)
-        _update_job(r, job_id, {"progress": 0.15})
+        feature_cols = requested_features if requested_features else FEATURE_NAMES
 
-        # ── 2. Resolve feature columns ────────────────────────────────────────
         if requested_features:
-            # Validate each name exists
             valid = set(FEATURE_NAMES)
             bad = [f for f in requested_features if f not in valid]
             if bad:
                 raise ValueError(f"Unknown features: {bad}")
-            feature_cols = requested_features
-        else:
-            feature_cols = FEATURE_NAMES
 
-        # ── 3. Label windows from BED (skip for IsoForest) ───────────────────
+        # ── 1. Load only needed columns from Parquet ──────────────────────────
+        parquet_path = settings.parquet_dir / "features_master.parquet"
+        needed_cols = ["_start", "_end"] + feature_cols
+        df = pd.read_parquet(parquet_path, columns=needed_cols)
+        _update_job(r, job_id, {"progress": 0.15})
+
+        # ── 2. Extract position arrays now — free them later for export ────────
+        starts = df["_start"].values.copy()
+        ends = df["_end"].values.copy()
+
+        # ── 3. Label + train ──────────────────────────────────────────────────
         if model_type == "isolation_forest":
             X_all = df[feature_cols].values.astype("float32")
+            del df
+            gc.collect()
+
             model, auc, ap = train_isolation_forest(X_all, model_params)
             n_pos, n_neg = 0, 0
             cv_mean, cv_std = 0.0, 0.0
             fi = {}
+
         else:
             if not bed_content:
                 raise ValueError("BED file required for supervised models")
 
-            labels = _parse_bed_labels(bed_content, df)
-            df = df.copy()
-            df["_label"] = labels
+            labels = _parse_bed_labels(bed_content, starts, ends)
 
             n_total_pos = int(labels.sum())
             if n_total_pos < 10:
@@ -139,32 +139,44 @@ def train_model(
 
             _update_job(r, job_id, {"progress": 0.25})
 
-            # ── 4. Balance + split ────────────────────────────────────────────
-            X_tr, X_te, y_tr, y_te, X_all, y_all, n_pos, n_neg = balance_and_split(
-                df, feature_cols, neg_ratio=neg_ratio, test_fraction=test_fraction,
+            # Extract full feature matrix for final genome-wide prediction
+            X_all = df[feature_cols].values.astype("float32")
+
+            # Build balanced training set, then free the DataFrame
+            X_tr, X_te, y_tr, y_te, X_bal, y_bal, n_pos, n_neg = balance_and_split(
+                df, feature_cols, labels, neg_ratio=neg_ratio, test_fraction=test_fraction,
             )
+            del df, labels
+            gc.collect()
+
             _update_job(r, job_id, {"progress": 0.35})
 
-            # ── 5. Train ──────────────────────────────────────────────────────
+            # ── 4. Train ──────────────────────────────────────────────────────
             if model_type == "xgboost":
                 model, auc, ap = train_xgboost(X_tr, y_tr, X_te, y_te, model_params)
             else:
                 model, auc, ap = train_random_forest(X_tr, y_tr, X_te, y_te, model_params)
 
+            del X_tr, X_te, y_tr, y_te
+            gc.collect()
             _update_job(r, job_id, {"progress": 0.65})
 
-            # ── 6. Cross-validation ───────────────────────────────────────────
-            cv_scores = run_cv(X_all, y_all, model_params)
+            # ── 5. Cross-validation ───────────────────────────────────────────
+            cv_scores = run_cv(X_bal, y_bal, model_params)
             cv_mean, cv_std = float(cv_scores.mean()), float(cv_scores.std())
+            del X_bal, y_bal
+            gc.collect()
             _update_job(r, job_id, {"progress": 0.75})
 
             fi = feature_importance_dict(model, feature_cols)
 
-        # ── 7. Predict on ALL windows ─────────────────────────────────────────
-        probs = predict_probs(model, df, feature_cols)
+        # ── 6. Predict on ALL windows ─────────────────────────────────────────
+        probs = predict_probs(model, X_all)
+        del X_all
+        gc.collect()
         _update_job(r, job_id, {"progress": 0.85})
 
-        # ── 8. Write output files ─────────────────────────────────────────────
+        # ── 7. Write output files ─────────────────────────────────────────────
         import joblib
         import json as _json
 
@@ -176,10 +188,9 @@ def train_model(
         model_path = job_dir / "model.joblib"
         meta_path = job_dir / "model_meta.json"
 
-        write_bedgraph(df, probs, chromosome, bg_path, track_name=f"job_{job_id[:8]}")
-        n_hc = write_highconf_bed(df, probs, chromosome, hc_path, track_name=f"job_{job_id[:8]}")
+        write_bedgraph(starts, ends, probs, chromosome, bg_path, track_name=f"job_{job_id[:8]}")
+        n_hc = write_highconf_bed(starts, ends, probs, chromosome, hc_path, track_name=f"job_{job_id[:8]}")
 
-        # Save model + feature list so predictions can be reproduced later
         joblib.dump(model, model_path)
         with open(meta_path, "w") as f:
             _json.dump({
@@ -189,7 +200,7 @@ def train_model(
                 "feature_cols": feature_cols,
             }, f, indent=2)
 
-        # ── 9. Persist results ────────────────────────────────────────────────
+        # ── 8. Persist results ────────────────────────────────────────────────
         metrics = {
             "auc": round(float(auc), 4) if auc is not None else None,
             "ap": round(float(ap), 4) if ap is not None else None,
