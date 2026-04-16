@@ -2,7 +2,7 @@
 set -e
 
 # Run Celery worker and Uvicorn in the same container so they share the
-# /data filesystem (Railway volumes are per-service, so we can't split them).
+# /var/data volume (Railway volumes are per-service, so we can't split them).
 celery -A celery_app.celery worker --loglevel=info --concurrency=2 &
 celery_pid=$!
 
