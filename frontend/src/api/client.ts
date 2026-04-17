@@ -1,7 +1,57 @@
-import axios from "axios";
+import axios, { type AxiosRequestConfig } from "axios";
 
 const api = axios.create({ baseURL: "/api" });
 
+// ---------------------------------------------------------------------------
+// Loading observer — count of in-flight requests, broadcast to subscribers.
+// Requests flagged `silent` (polling/background) don't drive the progress bar.
+// ---------------------------------------------------------------------------
+type MaybeSilent = { silent?: boolean };
+
+let inFlight = 0;
+const listeners = new Set<(count: number) => void>();
+const notify = () => listeners.forEach((fn) => fn(inFlight));
+
+export const onLoadingChange = (fn: (count: number) => void): (() => void) => {
+  listeners.add(fn);
+  fn(inFlight);
+  return () => {
+    listeners.delete(fn);
+  };
+};
+
+api.interceptors.request.use((config) => {
+  if (!(config as MaybeSilent).silent) {
+    inFlight++;
+    notify();
+  }
+  return config;
+});
+
+const finish = (config: MaybeSilent | undefined) => {
+  if (!config?.silent) {
+    inFlight = Math.max(0, inFlight - 1);
+    notify();
+  }
+};
+
+api.interceptors.response.use(
+  (resp) => {
+    finish(resp.config as unknown as MaybeSilent);
+    return resp;
+  },
+  (err) => {
+    finish(err?.config as MaybeSilent | undefined);
+    return Promise.reject(err);
+  },
+);
+
+// Helper for polling/background fetches that should NOT show loading bar.
+const silent: AxiosRequestConfig = { silent: true } as AxiosRequestConfig & MaybeSilent;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 export interface FeatureInfo {
   name: string;
   group: string;
@@ -28,6 +78,7 @@ export interface JobStatus {
   job_id: string;
   status: "pending" | "running" | "completed" | "failed";
   progress: number;
+  stage: string | null;
   model_type: string;
   chromosome: string;
   created_at: string;
@@ -54,6 +105,9 @@ export interface TrainConfig {
   test_fraction: number;
 }
 
+// ---------------------------------------------------------------------------
+// Calls
+// ---------------------------------------------------------------------------
 export const fetchFeatures = (): Promise<FeatureInfo[]> =>
   api.get<FeatureInfo[]>("/features").then((r) => r.data);
 
@@ -70,11 +124,11 @@ export const submitJob = (
   return api.post<{ job_id: string }>("/jobs", form).then((r) => r.data);
 };
 
-export const fetchJob = (jobId: string): Promise<JobStatus> =>
-  api.get<JobStatus>(`/jobs/${jobId}`).then((r) => r.data);
+export const fetchJob = (jobId: string, opts?: { silent?: boolean }): Promise<JobStatus> =>
+  api.get<JobStatus>(`/jobs/${jobId}`, opts?.silent ? silent : undefined).then((r) => r.data);
 
-export const fetchJobs = (): Promise<JobListItem[]> =>
-  api.get<JobListItem[]>("/jobs").then((r) => r.data);
+export const fetchJobs = (opts?: { silent?: boolean }): Promise<JobListItem[]> =>
+  api.get<JobListItem[]>("/jobs", opts?.silent ? silent : undefined).then((r) => r.data);
 
 export const deleteJob = (jobId: string): Promise<void> =>
   api.delete(`/jobs/${jobId}`).then(() => undefined);

@@ -58,7 +58,6 @@ export default function IgvViewer({ jobId, chromosome }: IgvViewerProps) {
       cancelled = true;
       if (browserRef.current) {
         try {
-          // igv.removeBrowser expects the browser instance
           import("igv").then((m) => {
             const igv = m.default ?? m;
             igv.removeBrowser(browserRef.current);
@@ -72,37 +71,48 @@ export default function IgvViewer({ jobId, chromosome }: IgvViewerProps) {
   }, [jobId, chromosome]);
 
   return (
-    <div style={{
-      background: "#1e293b", borderRadius: 16, border: "1px solid #334155",
-      padding: "24px 32px", marginBottom: 24,
-    }}>
-      <h2 style={{
-        fontSize: 12, fontWeight: 600, color: "#94a3b8",
-        margin: "0 0 20px", textTransform: "uppercase", letterSpacing: "0.05em",
-      }}>
-        Genome Browser
-      </h2>
-
-      {loading && !error && (
-        <div style={{ color: "#64748b", fontSize: 14, marginBottom: 12 }}>
-          Loading IGV…
-        </div>
-      )}
+    <div className="card" style={{ marginBottom: 20 }}>
+      <h2 className="section-label">Genome Browser</h2>
 
       {error && (
-        <div style={{ color: "#f87171", fontSize: 14 }}>
+        <div style={{ color: "var(--bad)", fontSize: 14 }}>
           Could not load genome browser: {error}
         </div>
       )}
 
-      {/* IGV mounts into this div */}
-      <div
-        ref={containerRef}
-        style={{
-          borderRadius: 8, overflow: "hidden",
-          display: error ? "none" : "block",
-        }}
-      />
+      {/* Container must stay in the layout (visible, non-zero width) so igv.js
+          can measure it on createBrowser. We overlay a loading shimmer above it
+          while the chunk + tracks are still fetching.
+
+          IGV is a light-themed widget — gene tracks and the right-side gear
+          gutter use white backgrounds. Letting them sit on the dark card
+          makes them look like rendering glitches. We give the IGV mount its
+          own light surface so the whole widget reads as one embedded panel. */}
+      <div style={{ position: "relative", minHeight: 160 }}>
+        <div className="igv-frame">
+          <div
+            ref={containerRef}
+            style={{
+              display: error ? "none" : "block",
+              minHeight: 160,
+            }}
+          />
+        </div>
+        {loading && !error && (
+          <div
+            className="skeleton"
+            style={{
+              position: "absolute", inset: 0,
+              borderRadius: 8,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "var(--text-mute)", fontSize: 13,
+              pointerEvents: "none",
+            }}
+          >
+            Loading genome browser…
+          </div>
+        )}
+      </div>
     </div>
   );
 }

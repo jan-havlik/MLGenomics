@@ -85,7 +85,15 @@ def train_model(
     config: dict,
 ) -> dict:
     r = _redis()
-    _update_job(r, job_id, {"status": "running", "progress": 0.05})
+
+    def stage(label: str, progress: float) -> None:
+        _update_job(r, job_id, {
+            "status": "running",
+            "progress": progress,
+            "stage": label,
+        })
+
+    stage("Initializing", 0.03)
 
     try:
         chromosome = config.get("chromosome", "chr21")
@@ -104,10 +112,11 @@ def train_model(
                 raise ValueError(f"Unknown features: {bad}")
 
         # ── 1. Load only needed columns from Parquet ──────────────────────────
+        stage(f"Loading feature matrix ({len(feature_cols)} cols)", 0.08)
         parquet_path = settings.parquet_dir / "features_master.parquet"
         needed_cols = ["_start", "_end"] + feature_cols
         df = pd.read_parquet(parquet_path, columns=needed_cols)
-        _update_job(r, job_id, {"progress": 0.15})
+        stage(f"Loaded {len(df):,} windows", 0.15)
 
         # ── 2. Extract position arrays now — free them later for export ────────
         starts = df["_start"].values.copy()
@@ -115,19 +124,23 @@ def train_model(
 
         # ── 3. Label + train ──────────────────────────────────────────────────
         if model_type == "isolation_forest":
+            stage("Preparing feature matrix", 0.20)
             X_all = df[feature_cols].values.astype("float32")
             del df
             gc.collect()
 
+            stage("Training Isolation Forest", 0.40)
             model, auc, ap = train_isolation_forest(X_all, model_params)
             n_pos, n_neg = 0, 0
             cv_mean, cv_std = 0.0, 0.0
             fi = {}
+            stage("Model trained", 0.70)
 
         else:
             if not bed_content:
                 raise ValueError("BED file required for supervised models")
 
+            stage("Labeling windows from BED", 0.20)
             labels = _parse_bed_labels(bed_content, starts, ends)
 
             n_total_pos = int(labels.sum())
@@ -137,21 +150,21 @@ def train_model(
                     "Check that your BED file uses the same chromosome as the parquet."
                 )
 
-            _update_job(r, job_id, {"progress": 0.25})
+            stage(f"Labeled {n_total_pos:,} positive windows", 0.25)
 
             # Extract full feature matrix, then immediately free the DataFrame
             X_all = df[feature_cols].values.astype("float32")
             del df
             gc.collect()
 
-            # Build balanced training set from the numpy array (df already freed)
+            stage(f"Balancing dataset (1:{neg_ratio} pos:neg)", 0.30)
             X_tr, X_te, y_tr, y_te, X_bal, y_bal, n_pos, n_neg = balance_and_split(
                 X_all, labels, neg_ratio=neg_ratio, test_fraction=test_fraction,
             )
             del labels
             gc.collect()
 
-            _update_job(r, job_id, {"progress": 0.35})
+            stage(f"Training {model_type} on {n_pos + n_neg:,} samples", 0.40)
 
             # ── 4. Train ──────────────────────────────────────────────────────
             if model_type == "xgboost":
@@ -161,22 +174,23 @@ def train_model(
 
             del X_tr, X_te, y_tr, y_te
             gc.collect()
-            _update_job(r, job_id, {"progress": 0.65})
+            stage(f"Held-out AUC {auc:.3f} — running 5-fold CV", 0.65)
 
             # ── 5. Cross-validation ───────────────────────────────────────────
             cv_scores = run_cv(X_bal, y_bal, model_params)
             cv_mean, cv_std = float(cv_scores.mean()), float(cv_scores.std())
             del X_bal, y_bal
             gc.collect()
-            _update_job(r, job_id, {"progress": 0.75})
+            stage(f"CV AUC {cv_mean:.3f} ±{cv_std:.3f}", 0.75)
 
             fi = feature_importance_dict(model, feature_cols)
 
         # ── 6. Predict on ALL windows ─────────────────────────────────────────
+        stage(f"Scoring {len(starts):,} genome windows", 0.82)
         probs = predict_probs(model, X_all)
         del X_all
         gc.collect()
-        _update_job(r, job_id, {"progress": 0.85})
+        stage("Generating outputs", 0.90)
 
         # ── 7. Write output files ─────────────────────────────────────────────
         import joblib
@@ -215,6 +229,7 @@ def train_model(
         _update_job(r, job_id, {
             "status": "completed",
             "progress": 1.0,
+            "stage": f"Done · {n_hc:,} high-confidence regions",
             "metrics": metrics,
             "feature_importance": fi,
         })
@@ -223,6 +238,7 @@ def train_model(
         _update_job(r, job_id, {
             "status": "failed",
             "progress": 0.0,
+            "stage": None,
             "error": str(exc),
         })
         raise

@@ -18,6 +18,7 @@ class JobStatus(BaseModel):
     job_id: str
     status: str  # pending | running | completed | failed
     progress: float  # 0.0 – 1.0
+    stage: Optional[str] = None  # human-readable current step (e.g. "Training model")
     model_type: str
     chromosome: str
     created_at: datetime

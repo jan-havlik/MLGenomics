@@ -48,23 +48,18 @@ export default function NewJob() {
   };
 
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto", padding: "3rem 2rem" }}>
-
-      {/* Page title */}
-      <h1 style={{ fontSize: 32, fontWeight: 700, color: "#e2e8f0", margin: "0 0 6px", letterSpacing: "-0.5px" }}>
-        New Training Job
-      </h1>
-      <p style={{ color: "#64748b", fontSize: 15, marginBottom: 40 }}>
+    <div className="container container--narrow route-fade">
+      <h1 className="page-title">New Training Job</h1>
+      <p className="page-sub" style={{ marginBottom: 32 }}>
         Train a classifier on {chromosome} (hg38) using pre-computed sequence features.
       </p>
 
-      {/* Step indicators */}
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 40 }}>
+      <div className="row" style={{ marginBottom: 32 }}>
         {STEPS.map((label, i) => {
           const done = i < step;
           const active = i === step;
           return (
-            <div key={i} style={{ display: "flex", alignItems: "center", flex: i < STEPS.length - 1 ? 1 : undefined }}>
+            <div key={i} className="row" style={{ flex: i < STEPS.length - 1 ? 1 : undefined }}>
               <button
                 onClick={() => setStep(i)}
                 style={{
@@ -72,33 +67,30 @@ export default function NewJob() {
                   background: "none", border: "none", cursor: "pointer", padding: 0,
                 }}
               >
-                {/* Circle */}
                 <div style={{
-                  width: 36, height: 36, borderRadius: "50%",
+                  width: 32, height: 32, borderRadius: "50%",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 14, fontWeight: 700, flexShrink: 0,
-                  background: done ? "#0369a1" : active ? "#0284c7" : "#1e293b",
-                  border: `2px solid ${done ? "#0369a1" : active ? "#38bdf8" : "#334155"}`,
-                  color: done || active ? "#fff" : "#475569",
-                  transition: "all 0.2s",
+                  fontSize: 13, fontWeight: 700, flexShrink: 0,
+                  background: done ? "var(--accent-dark)" : active ? "var(--accent-deep)" : "var(--surface)",
+                  border: `2px solid ${done ? "var(--accent-dark)" : active ? "var(--accent)" : "var(--border)"}`,
+                  color: done || active ? "#fff" : "var(--text-fade)",
+                  transition: "all 200ms ease",
                 }}>
                   {done ? "✓" : i + 1}
                 </div>
-                {/* Label */}
                 <span style={{
-                  fontSize: 14, fontWeight: active ? 600 : 400,
-                  color: active ? "#e2e8f0" : done ? "#94a3b8" : "#475569",
+                  fontSize: 13, fontWeight: active ? 600 : 400,
+                  color: active ? "var(--text)" : done ? "var(--text-mute)" : "var(--text-fade)",
                   whiteSpace: "nowrap",
-                }}>
+                }} className="hide-on-mobile">
                   {label}
                 </span>
               </button>
-              {/* Connector line */}
               {i < STEPS.length - 1 && (
                 <div style={{
-                  flex: 1, height: 2, margin: "0 12px",
-                  background: done ? "#0369a1" : "#1e293b",
-                  transition: "background 0.2s",
+                  flex: 1, height: 2, margin: "0 12px", minWidth: 16,
+                  background: done ? "var(--accent-dark)" : "var(--border-soft)",
+                  transition: "background 200ms ease",
                 }} />
               )}
             </div>
@@ -106,45 +98,36 @@ export default function NewJob() {
         })}
       </div>
 
-      {/* Step content */}
-      <div style={{
-        background: "#1e293b", borderRadius: 16, border: "1px solid #334155",
-        padding: "32px 36px", minHeight: 280,
-      }}>
-
-        {/* Step 0 — BED upload */}
+      <div className="card" style={{ minHeight: 240 }}>
         {step === 0 && (
           <div>
-            <h2 style={{ fontSize: 18, fontWeight: 600, color: "#e2e8f0", margin: "0 0 6px" }}>
+            <h2 style={{ fontSize: 17, fontWeight: 600, margin: "0 0 6px" }}>
               Upload label regions
             </h2>
-            <p style={{ color: "#64748b", fontSize: 14, margin: "0 0 24px" }}>
+            <p className="page-sub" style={{ marginBottom: 20 }}>
               Each BED region that overlaps a 200 bp window labels it as positive.
             </p>
             <BedUpload file={bedFile} onChange={setBedFile} optional={modelType === "isolation_forest"} />
-            <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 8 }}>
-              <label style={{ fontSize: 14, color: "#94a3b8", display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ marginTop: 18 }}>
+              <label className="row row--gap-3 mute" style={{ fontSize: 14 }}>
                 Negative : positive ratio
                 <input
                   type="number" min={1} max={20} value={negRatio}
                   onChange={(e) => setNegRatio(+e.target.value)}
-                  style={{
-                    width: 68, background: "#0f172a", border: "1px solid #334155",
-                    color: "#e2e8f0", borderRadius: 8, padding: "6px 10px", fontSize: 14,
-                  }}
+                  className="input input--sm"
+                  style={{ width: 76 }}
                 />
               </label>
             </div>
           </div>
         )}
 
-        {/* Step 1 — Features */}
         {step === 1 && (
           <div>
-            <h2 style={{ fontSize: 18, fontWeight: 600, color: "#e2e8f0", margin: "0 0 6px" }}>
+            <h2 style={{ fontSize: 17, fontWeight: 600, margin: "0 0 6px" }}>
               Select features
             </h2>
-            <p style={{ color: "#64748b", fontSize: 14, margin: "0 0 20px" }}>
+            <p className="page-sub" style={{ marginBottom: 16 }}>
               Toggle feature groups or individual features. Deselecting irrelevant groups often improves performance.
             </p>
             <div style={{ maxHeight: 380, overflowY: "auto", paddingRight: 8 }}>
@@ -153,13 +136,12 @@ export default function NewJob() {
           </div>
         )}
 
-        {/* Step 2 — Model */}
         {step === 2 && (
           <div>
-            <h2 style={{ fontSize: 18, fontWeight: 600, color: "#e2e8f0", margin: "0 0 6px" }}>
+            <h2 style={{ fontSize: 17, fontWeight: 600, margin: "0 0 6px" }}>
               Configure model
             </h2>
-            <p style={{ color: "#64748b", fontSize: 14, margin: "0 0 24px" }}>
+            <p className="page-sub" style={{ marginBottom: 20 }}>
               Pick an algorithm and tune hyperparameters.
             </p>
             <ModelPicker
@@ -171,37 +153,34 @@ export default function NewJob() {
         )}
       </div>
 
-      {/* Error */}
       {error && (
-        <div style={{
-          marginTop: 16, padding: "12px 16px",
-          background: "rgba(248,113,113,0.08)", border: "1px solid #f87171",
-          borderRadius: 10, color: "#f87171", fontSize: 14,
+        <div className="card" style={{
+          marginTop: 14, color: "var(--bad)", borderColor: "var(--bad)",
+          background: "rgba(248,113,113,0.08)", fontSize: 14, padding: "12px 16px",
         }}>
           {error}
         </div>
       )}
 
-      {/* Navigation */}
-      <div style={{ marginTop: 24, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="row row--between" style={{ marginTop: 20 }}>
         <button
+          className="btn btn--ghost btn--lg"
           onClick={() => setStep((s) => Math.max(0, s - 1))}
           disabled={step === 0}
-          style={navBtn(step === 0)}
         >
           ← Back
         </button>
 
-        <span style={{ fontSize: 13, color: "#475569" }}>
+        <span className="dim text-xs">
           Step {step + 1} of {STEPS.length}
         </span>
 
         {step < STEPS.length - 1 ? (
-          <button onClick={() => setStep((s) => s + 1)} style={navBtn(false, true)}>
+          <button className="btn btn--primary btn--lg" onClick={() => setStep((s) => s + 1)}>
             Next →
           </button>
         ) : (
-          <button onClick={handleSubmit} disabled={submitting} style={navBtn(submitting, true)}>
+          <button className="btn btn--primary btn--lg" onClick={handleSubmit} disabled={submitting}>
             {submitting ? "Submitting…" : "Train model"}
           </button>
         )}
@@ -209,12 +188,3 @@ export default function NewJob() {
     </div>
   );
 }
-
-const navBtn = (disabled: boolean, primary = false): React.CSSProperties => ({
-  padding: "12px 28px", borderRadius: 10, border: "none",
-  background: disabled ? "#1e293b" : primary ? "#0284c7" : "#334155",
-  color: disabled ? "#475569" : "#e2e8f0",
-  cursor: disabled ? "not-allowed" : "pointer",
-  fontSize: 15, fontWeight: 600,
-  transition: "background 0.15s",
-});

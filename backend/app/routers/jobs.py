@@ -56,6 +56,7 @@ def get_job(job_id: str):
         job_id=d["job_id"],
         status=d["status"],
         progress=d.get("progress", 0.0),
+        stage=d.get("stage"),
         model_type=d["model_type"],
         chromosome=d["chromosome"],
         created_at=datetime.fromisoformat(d["created_at"]),

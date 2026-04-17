@@ -3,14 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f172a" />
     <title>Genomics ML Portal</title>
     <style>
+      /* Inlined critical styles so the first paint is dark, never white. */
       *, *::before, *::after { box-sizing: border-box; }
-      body { margin: 0; font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; }
+      html, body { margin: 0; background: #0f172a; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+      #root { min-height: 100vh; }
+      .boot {
+        position: fixed; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        color: #475569; font-size: 14px; letter-spacing: 0.04em;
+      }
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot">Loading…</div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

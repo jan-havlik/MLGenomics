@@ -24,13 +24,13 @@ export default function BedUpload({ file, onChange, optional }: Props) {
       onDrop={handleDrop}
       onClick={() => inputRef.current?.click()}
       style={{
-        border: `2px dashed ${dragging ? "#38bdf8" : "#334155"}`,
-        borderRadius: 8,
-        padding: "2rem",
+        border: `2px dashed ${dragging ? "var(--accent)" : "var(--border)"}`,
+        borderRadius: "var(--radius)",
+        padding: "1.75rem",
         textAlign: "center",
         cursor: "pointer",
-        background: dragging ? "#0f2a3d" : "#1e293b",
-        transition: "all 0.15s",
+        background: dragging ? "rgba(56,189,248,0.06)" : "var(--surface-2)",
+        transition: "all 150ms ease",
       }}
     >
       <input
@@ -42,14 +42,12 @@ export default function BedUpload({ file, onChange, optional }: Props) {
       />
       {file ? (
         <div>
-          <div style={{ fontSize: 14, color: "#38bdf8", marginBottom: 4 }}>{file.name}</div>
-          <div style={{ fontSize: 12, color: "#64748b" }}>
-            {(file.size / 1024).toFixed(1)} KB
-          </div>
+          <div style={{ fontSize: 14, color: "var(--accent)", marginBottom: 4 }}>{file.name}</div>
+          <div className="text-xs dim">{(file.size / 1024).toFixed(1)} KB</div>
           <button
             onClick={(e) => { e.stopPropagation(); onChange(null); }}
             style={{
-              marginTop: 8, fontSize: 12, color: "#f87171",
+              marginTop: 8, fontSize: 12, color: "var(--bad)",
               background: "none", border: "none", cursor: "pointer",
             }}
           >
@@ -58,11 +56,11 @@ export default function BedUpload({ file, onChange, optional }: Props) {
         </div>
       ) : (
         <div>
-          <div style={{ fontSize: 24, marginBottom: 8 }}>+</div>
-          <div style={{ color: "#94a3b8", fontSize: 14 }}>
+          <div style={{ fontSize: 22, marginBottom: 6, color: "var(--text-mute)" }}>+</div>
+          <div className="mute" style={{ fontSize: 14 }}>
             Drop a BED file here or click to browse
           </div>
-          <div style={{ color: "#475569", fontSize: 12, marginTop: 6 }}>
+          <div className="dim text-xs" style={{ marginTop: 6 }}>
             {optional ? "Optional for Isolation Forest · " : ""}BED3+ format · max 50 MB
           </div>
         </div>
