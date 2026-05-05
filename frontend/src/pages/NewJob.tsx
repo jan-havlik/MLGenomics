@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { fetchFeatures, submitJob, FeatureInfo } from "../api/client";
 import BedUpload from "../components/BedUpload";
 import FeatureSelector from "../components/FeatureSelector";
+import GenomePicker from "../components/GenomePicker";
 import ModelPicker from "../components/ModelPicker";
 
 const STEPS = ["Upload labels", "Select features", "Configure model"];
@@ -11,7 +12,9 @@ export default function NewJob() {
   const navigate = useNavigate();
   const [features, setFeatures] = useState<FeatureInfo[]>([]);
   const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
-  const [chromosome] = useState("chr21");
+  const [genome, setGenome] = useState("hg38");
+  const [chromosome, setChromosome] = useState("chr21");
+  const [chromReady, setChromReady] = useState(false);
   const [modelType, setModelType] = useState("xgboost");
   const [modelParams, setModelParams] = useState({ n_estimators: 500, max_depth: 8 });
   const [negRatio, setNegRatio] = useState(3);
@@ -32,12 +35,16 @@ export default function NewJob() {
       setError("Please upload a BED file");
       return;
     }
+    if (!chromReady) {
+      setError("Chromosome data is not yet cached — click 'Prepare data' first.");
+      return;
+    }
     setError(null);
     setSubmitting(true);
     try {
       const featureList = selectedFeatures.size === features.length ? null : [...selectedFeatures];
       const { job_id } = await submitJob(
-        { chromosome, model_type: modelType, features: featureList, model_params: modelParams, neg_ratio: negRatio, test_fraction: 0.2 },
+        { genome, chromosome, model_type: modelType, features: featureList, model_params: modelParams, neg_ratio: negRatio, test_fraction: 0.2 },
         bedFile,
       );
       navigate(`/jobs/${job_id}`);
@@ -50,9 +57,16 @@ export default function NewJob() {
   return (
     <div className="container container--narrow route-fade">
       <h1 className="page-title">New Training Job</h1>
-      <p className="page-sub" style={{ marginBottom: 32 }}>
-        Train a classifier on {chromosome} (hg38) using pre-computed sequence features.
+      <p className="page-sub" style={{ marginBottom: 24 }}>
+        Pick a genome and chromosome, then configure the training job.
       </p>
+
+      <GenomePicker
+        genome={genome}
+        chromosome={chromosome}
+        onChange={(g, c) => { setGenome(g); setChromosome(c); }}
+        onReady={setChromReady}
+      />
 
       <div className="row" style={{ marginBottom: 32 }}>
         {STEPS.map((label, i) => {
@@ -180,7 +194,12 @@ export default function NewJob() {
             Next →
           </button>
         ) : (
-          <button className="btn btn--primary btn--lg" onClick={handleSubmit} disabled={submitting}>
+          <button
+            className="btn btn--primary btn--lg"
+            onClick={handleSubmit}
+            disabled={submitting || !chromReady}
+            title={!chromReady ? "Prepare the chromosome data first" : undefined}
+          >
             {submitting ? "Submitting…" : "Train model"}
           </button>
         )}

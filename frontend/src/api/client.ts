@@ -60,7 +60,25 @@ export interface FeatureInfo {
 
 export interface ChromosomeInfo {
   name: string;
-  parquet_available: boolean;
+  cached: boolean;
+  n_windows: number | null;
+}
+
+export interface GenomeInfo {
+  id: string;
+  display_name: string;
+  species: string;
+  chromosomes: string[];
+}
+
+export interface CacheStatus {
+  genome: string;
+  chromosome: string;
+  cached: boolean;
+  status: "running" | "completed" | "failed" | null;
+  progress: number | null;
+  stage: string | null;
+  error: string | null;
   n_windows: number | null;
 }
 
@@ -80,6 +98,7 @@ export interface JobStatus {
   progress: number;
   stage: string | null;
   model_type: string;
+  genome: string;
   chromosome: string;
   created_at: string;
   metrics: JobMetrics | null;
@@ -91,12 +110,14 @@ export interface JobListItem {
   job_id: string;
   status: string;
   model_type: string;
+  genome: string;
   chromosome: string;
   created_at: string;
   auc: number | null;
 }
 
 export interface TrainConfig {
+  genome: string;
   chromosome: string;
   model_type: string;
   features: string[] | null;
@@ -111,8 +132,44 @@ export interface TrainConfig {
 export const fetchFeatures = (): Promise<FeatureInfo[]> =>
   api.get<FeatureInfo[]>("/features").then((r) => r.data);
 
-export const fetchChromosomes = (): Promise<ChromosomeInfo[]> =>
-  api.get<ChromosomeInfo[]>("/chromosomes").then((r) => r.data);
+export const fetchChromosomes = (genome: string): Promise<ChromosomeInfo[]> =>
+  api.get<ChromosomeInfo[]>("/chromosomes", { params: { genome } }).then((r) => r.data);
+
+export const fetchGenomes = (): Promise<GenomeInfo[]> =>
+  api.get<GenomeInfo[]>("/genomes").then((r) => r.data);
+
+export const fetchCacheStatus = (
+  genome: string,
+  chromosome: string,
+  opts?: { silent?: boolean }
+): Promise<CacheStatus> =>
+  api
+    .get<CacheStatus>(
+      `/genome/${genome}/chromosome/${chromosome}/status`,
+      opts?.silent ? silent : undefined
+    )
+    .then((r) => r.data);
+
+export const prepareCache = (
+  genome: string,
+  chromosome: string
+): Promise<{ task_id: string; genome: string; chromosome: string }> =>
+  api
+    .post<{ task_id: string; genome: string; chromosome: string }>(
+      `/genome/${genome}/chromosome/${chromosome}/prepare`
+    )
+    .then((r) => r.data);
+
+export interface CacheUsage {
+  used_bytes: number;
+  max_bytes: number;
+  fraction: number;
+}
+
+export const fetchCacheUsage = (opts?: { silent?: boolean }): Promise<CacheUsage> =>
+  api
+    .get<CacheUsage>("/cache/usage", opts?.silent ? silent : undefined)
+    .then((r) => r.data);
 
 export const submitJob = (
   config: TrainConfig,

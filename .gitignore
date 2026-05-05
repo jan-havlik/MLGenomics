@@ -29,3 +29,9 @@ data/jobs/
 *.swp
 .idea/
 .vscode/
+
+# Ignored files
+.github
+Caddyfile
+docker-compose.prod.yml
+DEPLOY.md

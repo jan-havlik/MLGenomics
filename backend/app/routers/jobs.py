@@ -1,6 +1,7 @@
 import json
 import shutil
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime
 
 import redis
 from fastapi import APIRouter, HTTPException
@@ -16,7 +17,17 @@ def _redis() -> redis.Redis:
     return redis.from_url(settings.redis_url, decode_responses=True)
 
 
+def _validate_job_id(job_id: str) -> None:
+    """Reject anything that isn't a UUID — defends every job_id-keyed
+    filesystem operation against path traversal attempts."""
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job_id")
+
+
 def _load_job(r: redis.Redis, job_id: str) -> dict:
+    _validate_job_id(job_id)
     raw = r.get(f"job:{job_id}")
     if not raw:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -37,6 +48,7 @@ def list_jobs():
             job_id=d["job_id"],
             status=d["status"],
             model_type=d["model_type"],
+            genome=d.get("genome", "hg38"),
             chromosome=d["chromosome"],
             created_at=datetime.fromisoformat(d["created_at"]),
             auc=d.get("metrics", {}).get("auc") if d.get("metrics") else None,
@@ -58,6 +70,7 @@ def get_job(job_id: str):
         progress=d.get("progress", 0.0),
         stage=d.get("stage"),
         model_type=d["model_type"],
+        genome=d.get("genome", "hg38"),
         chromosome=d["chromosome"],
         created_at=datetime.fromisoformat(d["created_at"]),
         metrics=metrics,
@@ -79,6 +92,48 @@ def export_job(job_id: str):
         path=str(bg_path),
         media_type="text/plain",
         filename=f"predictions_{job_id[:8]}.bedGraph",
+    )
+
+
+@router.get("/{job_id}/export.bw")
+def export_job_bigwig(job_id: str):
+    r = _redis()
+    d = _load_job(r, job_id)
+    if d["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+
+    bw_path = settings.jobs_dir / job_id / "predictions.bw"
+    bg_path = settings.jobs_dir / job_id / "predictions.bedGraph"
+
+    # Lazy-generate for jobs that completed before bigWig support was added.
+    if not bw_path.exists():
+        if not bg_path.exists():
+            raise HTTPException(status_code=404, detail="No prediction file found")
+        from app.core.export import bedgraph_to_bigwig
+        chrom = d["chromosome"]
+        max_end = 0
+        with open(bg_path) as fh:
+            for line in fh:
+                if line.startswith(("track", "#", "browser")):
+                    continue
+                cols = line.rstrip().split("\t")
+                if len(cols) >= 3:
+                    try:
+                        max_end = max(max_end, int(cols[2]))
+                    except ValueError:
+                        continue
+        if max_end == 0:
+            raise HTTPException(status_code=500, detail="bedGraph has no usable rows")
+        try:
+            bedgraph_to_bigwig(bg_path, bw_path, chrom, max_end)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"bigWig conversion failed: {e}")
+
+    return FileResponse(
+        path=str(bw_path),
+        media_type="application/octet-stream",
+        filename=f"predictions_{job_id[:8]}.bw",
+        headers={"Accept-Ranges": "bytes"},
     )
 
 

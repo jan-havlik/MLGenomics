@@ -20,6 +20,7 @@ class JobStatus(BaseModel):
     progress: float  # 0.0 – 1.0
     stage: Optional[str] = None  # human-readable current step (e.g. "Training model")
     model_type: str
+    genome: str = "hg38"  # legacy jobs predate the genome field
     chromosome: str
     created_at: datetime
     metrics: Optional[JobMetrics] = None
@@ -31,6 +32,7 @@ class JobListItem(BaseModel):
     job_id: str
     status: str
     model_type: str
+    genome: str = "hg38"
     chromosome: str
     created_at: datetime
     auc: Optional[float] = None

@@ -56,6 +56,7 @@ def _load_job_redis(r: redis_mod.Redis, job_id: str) -> dict:
 
 
 def _lib_dir(name: str) -> Path:
+    _validate_slug(name)
     return settings.library_dir / name
 
 
@@ -282,15 +283,19 @@ def library_predict(name: str):
     info = json.loads((dest / "library_info.json").read_text())
     feature_cols = meta["feature_cols"]
     chromosome = meta["chromosome"]
+    genome = meta.get("genome", "hg38")  # legacy library models predate the genome field
     model_type = meta["model_type"]
 
-    # Load parquet
-    parquet_map = {
-        "chr21": settings.parquet_dir / "features_master.parquet",
-    }
-    parquet_path = parquet_map.get(chromosome)
-    if not parquet_path or not parquet_path.exists():
-        raise HTTPException(status_code=400, detail=f"No feature matrix for {chromosome}")
+    from app.tasks.extraction import cache_path
+    parquet_path = cache_path(genome, chromosome)
+    if not parquet_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Feature cache missing for {genome}/{chromosome}. "
+                f"Trigger extraction via POST /api/genome/{genome}/chromosome/{chromosome}/prepare first."
+            ),
+        )
 
     df = pd.read_parquet(parquet_path)
     missing = [c for c in feature_cols if c not in df.columns]

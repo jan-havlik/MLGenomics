@@ -26,11 +26,13 @@ import redis
 from celery_app import celery
 from app.config import settings
 from app.core.features import FEATURE_NAMES
+from app.core.genomes import is_valid
 from app.core.models import (
     train_xgboost, train_random_forest, train_isolation_forest,
     run_cv, balance_and_split, feature_importance_dict,
 )
-from app.core.export import predict_probs, write_bedgraph, write_highconf_bed
+from app.core.export import bedgraph_to_bigwig, predict_probs, write_bedgraph, write_highconf_bed
+from app.tasks.extraction import cache_path
 
 
 def _redis() -> redis.Redis:
@@ -96,12 +98,16 @@ def train_model(
     stage("Initializing", 0.03)
 
     try:
+        genome = config.get("genome", "hg38")
         chromosome = config.get("chromosome", "chr21")
         model_type = config.get("model_type", "xgboost")
         requested_features = config.get("features")  # None = all
         model_params = config.get("model_params") or {}
         neg_ratio = config.get("neg_ratio", 3)
         test_fraction = config.get("test_fraction", 0.2)
+
+        if not is_valid(genome, chromosome):
+            raise ValueError(f"Unknown genome/chromosome: {genome}/{chromosome}")
 
         feature_cols = requested_features if requested_features else FEATURE_NAMES
 
@@ -111,9 +117,14 @@ def train_model(
             if bad:
                 raise ValueError(f"Unknown features: {bad}")
 
-        # ── 1. Load only needed columns from Parquet ──────────────────────────
+        # ── 1. Load only needed columns from cached Parquet ───────────────────
         stage(f"Loading feature matrix ({len(feature_cols)} cols)", 0.08)
-        parquet_path = settings.parquet_dir / "features_master.parquet"
+        parquet_path = cache_path(genome, chromosome)
+        if not parquet_path.exists():
+            raise ValueError(
+                f"Feature cache missing for {genome}/{chromosome}. "
+                "Trigger extraction via POST /api/genome/{genome}/chromosome/{chrom}/prepare first."
+            )
         needed_cols = ["_start", "_end"] + feature_cols
         df = pd.read_parquet(parquet_path, columns=needed_cols)
         stage(f"Loaded {len(df):,} windows", 0.15)
@@ -200,6 +211,7 @@ def train_model(
         job_dir.mkdir(parents=True, exist_ok=True)
 
         bg_path = job_dir / "predictions.bedGraph"
+        bw_path = job_dir / "predictions.bw"
         hc_path = job_dir / "highconf.bed"
         model_path = job_dir / "model.joblib"
         meta_path = job_dir / "model_meta.json"
@@ -207,11 +219,21 @@ def train_model(
         write_bedgraph(starts, ends, probs, chromosome, bg_path, track_name=f"job_{job_id[:8]}")
         n_hc = write_highconf_bed(starts, ends, probs, chromosome, hc_path, track_name=f"job_{job_id[:8]}")
 
+        # Build a bigWig alongside the bedGraph so the genome browser can do
+        # range queries instead of streaming the entire chromosome as text.
+        try:
+            chrom_size = int(ends.max())
+            bedgraph_to_bigwig(bg_path, bw_path, chromosome, chrom_size)
+        except Exception as bw_err:
+            # bigWig is an optimisation — log and continue with bedGraph-only.
+            stage(f"bigWig conversion skipped: {bw_err}", 0.93)
+
         joblib.dump(model, model_path)
         with open(meta_path, "w") as f:
             _json.dump({
                 "job_id": job_id,
                 "model_type": model_type,
+                "genome": genome,
                 "chromosome": chromosome,
                 "feature_cols": feature_cols,
             }, f, indent=2)

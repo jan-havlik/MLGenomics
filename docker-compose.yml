@@ -24,11 +24,14 @@ services:
       - ./data:/app/data:ro
       - jobs_data:/var/data/jobs
       - library_data:/var/data/library
+      - cache_data:/var/data/cache
     environment:
       - REDIS_URL=redis://redis:6379/0
       - PARQUET_DIR=/app/data
       - JOBS_DIR=/var/data/jobs
       - LIBRARY_DIR=/var/data/library
+      - FEATURE_CACHE_DIR=/var/data/cache
+      - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
     depends_on:
       redis:
         condition: service_healthy
@@ -43,11 +46,13 @@ services:
       - ./data:/app/data:ro
       - jobs_data:/var/data/jobs
       - library_data:/var/data/library
+      - cache_data:/var/data/cache
     environment:
       - REDIS_URL=redis://redis:6379/0
       - PARQUET_DIR=/app/data
       - JOBS_DIR=/var/data/jobs
       - LIBRARY_DIR=/var/data/library
+      - FEATURE_CACHE_DIR=/var/data/cache
     depends_on:
       redis:
         condition: service_healthy
@@ -69,3 +74,4 @@ volumes:
   redis_data:
   jobs_data:
   library_data:
+  cache_data:

@@ -248,7 +248,7 @@ export default function JobResults() {
         <div>
           <h1 className="page-title">{MODEL_LABEL[job.model_type] ?? job.model_type}</h1>
           <div className="page-sub">
-            {job.chromosome} · {new Date(job.created_at).toLocaleString()}
+            {job.genome} · {job.chromosome} · {new Date(job.created_at).toLocaleString()}
           </div>
         </div>
         <div className={`badge badge--lg ${cls}`}>{job.status}</div>
@@ -288,7 +288,7 @@ export default function JobResults() {
 
       {job.status === "completed" && job.metrics && (
         <>
-          <IgvViewer jobId={job.job_id} chromosome={job.chromosome} />
+          <IgvViewer jobId={job.job_id} genome={job.genome} chromosome={job.chromosome} />
 
           <div className="card" style={{ marginBottom: 20 }}>
             <h2 className="section-label" style={{ margin: "0 0 24px" }}>Results</h2>

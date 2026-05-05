@@ -10,7 +10,7 @@ celery = Celery(
     "genomics",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.training"],
+    include=["app.tasks.training", "app.tasks.extraction"],
 )
 
 celery.conf.update(

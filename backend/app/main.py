@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.config import settings
 from app.routers import features, jobs, train, library
 
 app = FastAPI(
@@ -13,13 +14,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS only opens the doors for browsers on the configured frontend origins.
+# When no origins are configured we leave the middleware off entirely so the
+# server stays closed by default in misconfigured deployments.
+if settings.allowed_origins_list:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins_list,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+    )
 
 app.include_router(features.router)
 app.include_router(jobs.router)

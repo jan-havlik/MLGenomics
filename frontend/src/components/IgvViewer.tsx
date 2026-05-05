@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 
 interface IgvViewerProps {
   jobId: string;
+  genome: string;
   chromosome: string;
 }
 
-export default function IgvViewer({ jobId, chromosome }: IgvViewerProps) {
+export default function IgvViewer({ jobId, genome, chromosome }: IgvViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const browserRef = useRef<any>(null);
@@ -24,13 +25,13 @@ export default function IgvViewer({ jobId, chromosome }: IgvViewerProps) {
       const igv = igvModule.default ?? igvModule;
 
       igv.createBrowser(containerRef.current, {
-        genome: "hg38",
+        genome,
         locus: `${chromosome}:5,000,000-15,000,000`,
         tracks: [
           {
             name: "Predictions",
-            url: `${window.location.origin}/api/jobs/${jobId}/export`,
-            format: "bedgraph" as never,
+            url: `${window.location.origin}/api/jobs/${jobId}/export.bw`,
+            format: "bigwig" as never,
             type: "wig",
             color: "#0ea5e9",
             autoscale: true,
@@ -68,7 +69,7 @@ export default function IgvViewer({ jobId, chromosome }: IgvViewerProps) {
         browserRef.current = null;
       }
     };
-  }, [jobId, chromosome]);
+  }, [jobId, genome, chromosome]);
 
   return (
     <div className="card" style={{ marginBottom: 20 }}>

@@ -15,6 +15,16 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# UCSC bedGraphToBigWig — used by training to publish range-queryable tracks
+# for the genome browser. Static binary, no extra runtime deps.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -fsSL -o /usr/local/bin/bedGraphToBigWig \
+        http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/bedGraphToBigWig \
+    && chmod +x /usr/local/bin/bedGraphToBigWig \
+    && apt-get purge -y curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy application code
 COPY backend/ .
 
@@ -26,7 +36,7 @@ COPY data/features_master.parquet /app/data/features_master.parquet
 COPY --from=frontend-build /app/dist /frontend/dist
 
 # Ensure runtime state directories exist (overlaid by the Railway volume in prod)
-RUN mkdir -p /var/data/jobs /var/data/library
+RUN mkdir -p /var/data/jobs /var/data/library /var/data/cache
 
 ENV PYTHONUNBUFFERED=1
 ENV PARQUET_DIR=/app/data
