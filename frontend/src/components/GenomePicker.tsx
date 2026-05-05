@@ -31,6 +31,7 @@ export default function GenomePicker({ genome, chromosome, onChange, onReady }: 
   const [usage, setUsage] = useState<CacheUsage | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
   const pollRef = useRef<number | null>(null);
 
   const refreshUsage = () => {
@@ -46,65 +47,91 @@ export default function GenomePicker({ genome, chromosome, onChange, onReady }: 
     fetchChromosomes(genome).then(setChromosomes);
   }, [genome]);
 
+  // Reset transient UI state when the user picks a different chromosome.
+  useEffect(() => {
+    setPreparing(false);
+    setError(null);
+  }, [genome, chromosome]);
+
+  // All polling lives inside this effect so the interval is bound to the
+  // currently-selected (genome, chromosome). Switching chromosomes cancels
+  // the old poller; navigating back to an in-flight extraction picks up
+  // where it left off.
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setStatus(null);
+
+    const stopPolling = () => {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+
+    const handleStatus = (s: CacheStatus): boolean => {
+      if (cancelled) return true;
+      setStatus(s);
+      if (s.cached || s.status === "completed") {
+        onReady(true);
+        setPreparing(false);
+        fetchChromosomes(genome).then((cs) => {
+          if (!cancelled) setChromosomes(cs);
+        });
+        refreshUsage();
+        return true;
+      }
+      if (s.status === "failed") {
+        setPreparing(false);
+        setError(s.error || "Extraction failed");
+        return true;
+      }
+      if (s.status === "running") {
+        setPreparing(true);
+      }
+      return false;
+    };
+
+    const startPolling = () => {
+      if (pollRef.current) return;
+      pollRef.current = window.setInterval(async () => {
+        try {
+          const s = await fetchCacheStatus(genome, chromosome, { silent: true });
+          if (handleStatus(s)) stopPolling();
+        } catch {
+          // swallow — keep polling, transient errors recover on next tick
+        }
+      }, 2000);
+    };
+
     fetchCacheStatus(genome, chromosome, { silent: true })
       .then((s) => {
-        if (!cancelled) {
-          setStatus(s);
+        const terminal = handleStatus(s);
+        if (!terminal && s.status === "running") {
+          // Extraction was started by us or someone else — resume polling.
+          startPolling();
+        } else if (!terminal) {
           onReady(s.cached);
         }
       })
       .catch(() => {
         if (!cancelled) onReady(false);
       });
+
     return () => {
       cancelled = true;
-      if (pollRef.current) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      stopPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genome, chromosome]);
-
-  const startPolling = () => {
-    if (pollRef.current) return;
-    pollRef.current = window.setInterval(async () => {
-      try {
-        const s = await fetchCacheStatus(genome, chromosome, { silent: true });
-        setStatus(s);
-        if (s.cached || s.status === "completed") {
-          onReady(true);
-          setPreparing(false);
-          if (pollRef.current) {
-            window.clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
-          fetchChromosomes(genome).then(setChromosomes);
-          refreshUsage();
-        } else if (s.status === "failed") {
-          setPreparing(false);
-          setError(s.error || "Extraction failed");
-          if (pollRef.current) {
-            window.clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
-        }
-      } catch {
-        // swallow — keep polling
-      }
-    }, 2000);
-  };
+  }, [genome, chromosome, refreshTick]);
 
   const handlePrepare = async () => {
     setError(null);
     setPreparing(true);
     try {
       await prepareCache(genome, chromosome);
-      startPolling();
+      // Re-run the deps effect, which will see status="running" and start polling.
+      setRefreshTick((n) => n + 1);
     } catch (e: unknown) {
       setPreparing(false);
       setError(e instanceof Error ? e.message : "Failed to start extraction");
