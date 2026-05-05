@@ -2,7 +2,7 @@
 
 A web application for training machine learning models to classify genomic features across the human genome. Scientists upload BED label files, select sequence features, choose a model, and receive genome-wide predictions as BedGraph files ready for genome browsers.
 
-**Live demo: [mlgenomics.up.railway.app](https://mlgenomics.up.railway.app)**
+**Live demo: [jan-havlik.tech](https://www.jan-havlik.tech)**
 
 ---
 
