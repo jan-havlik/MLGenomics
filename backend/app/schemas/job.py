@@ -9,9 +9,18 @@ class JobMetrics(BaseModel):
     ap: Optional[float] = None
     cv_auc_mean: float = 0.0
     cv_auc_std: float = 0.0
+    # Operating-point metrics at the 0.5 cutoff (None for label-free apply jobs).
+    precision: Optional[float] = None
+    recall: Optional[float] = None
+    f1: Optional[float] = None
+    specificity: Optional[float] = None
     n_positives: int = 0
     n_negatives: int = 0
     n_highconf_regions: int = 0
+    # Genome-application coverage.
+    n_windows_total: int = 0
+    flagged_fraction: float = 0.0
+    flagged_bp: int = 0
 
 
 class JobStatus(BaseModel):

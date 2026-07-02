@@ -8,7 +8,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from sklearn.ensemble import IsolationForest
 
 
 def write_bedgraph(
@@ -89,19 +88,5 @@ def bedgraph_to_bigwig(
 
 
 def predict_probs(model, X: np.ndarray) -> np.ndarray:
-    """
-    Get per-window probability scores from a pre-built float32 feature matrix.
-    For IsolationForest: normalise decision_function to [0, 1].
-    For classifiers: use predict_proba[:,1].
-    """
-    if isinstance(model, IsolationForest):
-        scores = model.decision_function(X)
-        # Negate so anomalies → high scores, then min-max scale
-        scores = -scores
-        lo, hi = scores.min(), scores.max()
-        if hi > lo:
-            scores = (scores - lo) / (hi - lo)
-        else:
-            scores = np.zeros_like(scores)
-        return scores
+    """Per-window positive-class probability from a pre-built float32 matrix."""
     return model.predict_proba(X)[:, 1]

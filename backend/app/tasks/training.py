@@ -2,16 +2,15 @@
 Celery training task.
 
 Flow:
-  1. Load pre-computed feature matrix (Parquet) — only needed columns
+  1. Extract the feature matrix at the job's window size (cached per window)
   2. Extract position arrays (start/end) for export
   3. Parse uploaded BED file → label windows
-  4. Extract full feature matrix, then free the DataFrame
-  5. Balance dataset + train/test split
-  6. Train model (XGBoost / RF / IsoForest) + 5-fold CV
-  7. Predict on all 200k windows
-  8. Write bedGraph + high-conf BED to disk
-  9. Persist metrics in Redis
-  10. Update job status
+  4. Balance dataset + train/test split
+  5. Train XGBoost + 5-fold CV
+  6. Predict on all windows
+  7. Write bedGraph + high-conf BED to disk
+  8. Persist metrics + model (with its window size) in Redis / on disk
+  9. Update job status
 """
 from __future__ import annotations
 
@@ -28,11 +27,11 @@ from app.config import settings
 from app.core.features import FEATURE_NAMES
 from app.core.genomes import is_valid
 from app.core.models import (
-    train_xgboost, train_random_forest, train_isolation_forest,
-    run_cv, balance_and_split, feature_importance_dict,
+    train_xgboost, run_cv, balance_and_split, feature_importance_dict,
+    threshold_metrics,
 )
 from app.core.export import bedgraph_to_bigwig, predict_probs, write_bedgraph, write_highconf_bed
-from app.tasks.extraction import cache_path
+from app.tasks.extraction import ensure_feature_parquet
 
 
 def _redis() -> redis.Redis:
@@ -83,7 +82,7 @@ def _parse_bed_labels(bed_content: str, starts: np.ndarray, ends: np.ndarray) ->
 def train_model(
     self,
     job_id: str,
-    bed_content: str | None,  # None for IsolationForest
+    bed_content: str,
     config: dict,
 ) -> dict:
     r = _redis()
@@ -100,101 +99,99 @@ def train_model(
     try:
         genome = config.get("genome", "hg38")
         chromosome = config.get("chromosome", "chr21")
-        model_type = config.get("model_type", "xgboost")
         requested_features = config.get("features")  # None = all
         model_params = config.get("model_params") or {}
         neg_ratio = config.get("neg_ratio", 3)
         test_fraction = config.get("test_fraction", 0.2)
+        window_size = int(config.get("window_size") or 200)
+        step_size = int(config.get("step_size") or window_size)
 
         if not is_valid(genome, chromosome):
             raise ValueError(f"Unknown genome/chromosome: {genome}/{chromosome}")
+        if window_size < 10:
+            raise ValueError(f"window_size must be >= 10 (got {window_size})")
+
+        if not bed_content:
+            raise ValueError("BED file with positive labels is required")
 
         feature_cols = requested_features if requested_features else FEATURE_NAMES
-
         if requested_features:
-            valid = set(FEATURE_NAMES)
-            bad = [f for f in requested_features if f not in valid]
+            bad = [f for f in requested_features if f not in set(FEATURE_NAMES)]
             if bad:
                 raise ValueError(f"Unknown features: {bad}")
 
-        # ── 1. Load only needed columns from cached Parquet ───────────────────
-        stage(f"Loading feature matrix ({len(feature_cols)} cols)", 0.08)
-        parquet_path = cache_path(genome, chromosome)
-        if not parquet_path.exists():
-            raise ValueError(
-                f"Feature cache missing for {genome}/{chromosome}. "
-                "Trigger extraction via POST /api/genome/{genome}/chromosome/{chrom}/prepare first."
-            )
+        # ── 1. Extract features at the requested window (cached per window) ────
+        def extract_progress(frac: float, msg: str) -> None:
+            stage(msg, 0.08 + 0.24 * frac)  # map extractor 0..1 → 0.08..0.32
+
+        stage(f"Preparing {chromosome} features at {window_size} bp windows", 0.08)
+        parquet_path = ensure_feature_parquet(
+            genome, chromosome, window_size, step_size, progress=extract_progress,
+        )
         needed_cols = ["_start", "_end"] + feature_cols
         df = pd.read_parquet(parquet_path, columns=needed_cols)
-        stage(f"Loaded {len(df):,} windows", 0.15)
+        stage(f"Loaded {len(df):,} windows", 0.34)
 
-        # ── 2. Extract position arrays now — free them later for export ────────
+        # ── 2. Position arrays (kept for export after the DataFrame is freed) ──
         starts = df["_start"].values.copy()
         ends = df["_end"].values.copy()
 
-        # ── 3. Label + train ──────────────────────────────────────────────────
-        if model_type == "isolation_forest":
-            stage("Preparing feature matrix", 0.20)
-            X_all = df[feature_cols].values.astype("float32")
-            del df
-            gc.collect()
+        # ── 3. Label windows from BED ─────────────────────────────────────────
+        stage("Labeling windows from BED", 0.36)
+        labels = _parse_bed_labels(bed_content, starts, ends)
 
-            stage("Training Isolation Forest", 0.40)
-            model, auc, ap = train_isolation_forest(X_all, model_params)
-            n_pos, n_neg = 0, 0
-            cv_mean, cv_std = 0.0, 0.0
-            fi = {}
-            stage("Model trained", 0.70)
-
-        else:
-            if not bed_content:
-                raise ValueError("BED file required for supervised models")
-
-            stage("Labeling windows from BED", 0.20)
-            labels = _parse_bed_labels(bed_content, starts, ends)
-
-            n_total_pos = int(labels.sum())
-            if n_total_pos < 10:
-                raise ValueError(
-                    f"Too few positive windows ({n_total_pos}) after BED labeling. "
-                    "Check that your BED file uses the same chromosome as the parquet."
-                )
-
-            stage(f"Labeled {n_total_pos:,} positive windows", 0.25)
-
-            # Extract full feature matrix, then immediately free the DataFrame
-            X_all = df[feature_cols].values.astype("float32")
-            del df
-            gc.collect()
-
-            stage(f"Balancing dataset (1:{neg_ratio} pos:neg)", 0.30)
-            X_tr, X_te, y_tr, y_te, X_bal, y_bal, n_pos, n_neg = balance_and_split(
-                X_all, labels, neg_ratio=neg_ratio, test_fraction=test_fraction,
+        n_total_pos = int(labels.sum())
+        if n_total_pos < 10:
+            raise ValueError(
+                f"Too few positive windows ({n_total_pos}) after BED labeling. "
+                "Check that your BED file uses the same chromosome as the training data, "
+                "and that the window size is appropriate for your region widths."
             )
-            del labels
-            gc.collect()
 
-            stage(f"Training {model_type} on {n_pos + n_neg:,} samples", 0.40)
+        # Guard against degenerate labeling: if positives are the majority of
+        # windows there's no background to contrast against — the model just
+        # learns "say positive" and scores everything ~1.0. Usually caused by a
+        # feature window much larger than the BED regions (each small region
+        # claims a whole window) or a BED that covers most of the chromosome.
+        pos_fraction = n_total_pos / len(starts)
+        if pos_fraction >= 0.5:
+            raise ValueError(
+                f"BED labels {pos_fraction * 100:.0f}% of the {len(starts):,} windows positive — "
+                f"too few negatives remain to train a discriminative model (positives must be the "
+                f"minority). The {window_size} bp feature window is likely much larger than your BED "
+                f"regions, or the BED covers most of the chromosome. Try a smaller feature window or a "
+                f"more specific BED."
+            )
+        stage(f"Labeled {n_total_pos:,} positive windows ({pos_fraction * 100:.0f}%)", 0.40)
 
-            # ── 4. Train ──────────────────────────────────────────────────────
-            if model_type == "xgboost":
-                model, auc, ap = train_xgboost(X_tr, y_tr, X_te, y_te, model_params)
-            else:
-                model, auc, ap = train_random_forest(X_tr, y_tr, X_te, y_te, model_params)
+        X_all = df[feature_cols].values.astype("float32")
+        del df
+        gc.collect()
 
-            del X_tr, X_te, y_tr, y_te
-            gc.collect()
-            stage(f"Held-out AUC {auc:.3f} — running 5-fold CV", 0.65)
+        # ── 4. Balance + split ────────────────────────────────────────────────
+        stage(f"Balancing dataset (1:{neg_ratio} pos:neg)", 0.44)
+        X_tr, X_te, y_tr, y_te, X_bal, y_bal, n_pos, n_neg = balance_and_split(
+            X_all, labels, neg_ratio=neg_ratio, test_fraction=test_fraction,
+        )
+        del labels
+        gc.collect()
 
-            # ── 5. Cross-validation ───────────────────────────────────────────
-            cv_scores = run_cv(X_bal, y_bal, model_params)
-            cv_mean, cv_std = float(cv_scores.mean()), float(cv_scores.std())
-            del X_bal, y_bal
-            gc.collect()
-            stage(f"CV AUC {cv_mean:.3f} ±{cv_std:.3f}", 0.75)
+        # ── 5. Train XGBoost ──────────────────────────────────────────────────
+        stage(f"Training XGBoost on {n_pos + n_neg:,} samples", 0.52)
+        model, auc, ap = train_xgboost(X_tr, y_tr, X_te, y_te, model_params)
+        # Operating-point metrics on the held-out test set (0.5 cutoff).
+        thr = threshold_metrics(y_te, predict_probs(model, X_te), 0.5)
+        del X_tr, X_te, y_tr, y_te
+        gc.collect()
+        stage(f"Held-out AUC {auc:.3f} — running 5-fold CV", 0.66)
 
-            fi = feature_importance_dict(model, feature_cols)
+        cv_scores = run_cv(X_bal, y_bal, model_params)
+        cv_mean, cv_std = float(cv_scores.mean()), float(cv_scores.std())
+        del X_bal, y_bal
+        gc.collect()
+        stage(f"CV AUC {cv_mean:.3f} ±{cv_std:.3f}", 0.76)
+
+        fi = feature_importance_dict(model, feature_cols)
 
         # ── 6. Predict on ALL windows ─────────────────────────────────────────
         stage(f"Scoring {len(starts):,} genome windows", 0.82)
@@ -232,21 +229,31 @@ def train_model(
         with open(meta_path, "w") as f:
             _json.dump({
                 "job_id": job_id,
-                "model_type": model_type,
+                "model_type": "xgboost",
                 "genome": genome,
                 "chromosome": chromosome,
                 "feature_cols": feature_cols,
+                "window_size": window_size,
+                "step_size": step_size,
             }, f, indent=2)
 
         # ── 8. Persist results ────────────────────────────────────────────────
+        n_windows_total = int(len(starts))
         metrics = {
             "auc": round(float(auc), 4) if auc is not None else None,
             "ap": round(float(ap), 4) if ap is not None else None,
             "cv_auc_mean": round(cv_mean, 4),
             "cv_auc_std": round(cv_std, 4),
+            "precision": round(thr["precision"], 4),
+            "recall": round(thr["recall"], 4),
+            "f1": round(thr["f1"], 4),
+            "specificity": round(thr["specificity"], 4),
             "n_positives": int(n_pos),
             "n_negatives": int(n_neg),
             "n_highconf_regions": n_hc,
+            "n_windows_total": n_windows_total,
+            "flagged_fraction": round(n_hc / n_windows_total, 6) if n_windows_total else 0.0,
+            "flagged_bp": int(n_hc) * int(window_size),
         }
         _update_job(r, job_id, {
             "status": "completed",

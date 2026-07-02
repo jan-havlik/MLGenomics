@@ -37,11 +37,12 @@ settings.feature_cache_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _migrate_legacy_chr21_parquet() -> None:
-    """The pre-multigenome build shipped a single chr21 parquet at
-    {parquet_dir}/features_master.parquet. Move it into the cache layout
-    so existing deployments don't need to re-fetch chr21 from UCSC."""
+    """The pre-multigenome build shipped a single chr21 parquet (200 bp windows)
+    at {parquet_dir}/features_master.parquet. Place it under the windowed cache
+    name so a 200 bp chr21 job reuses it instead of re-extracting. (Other window
+    sizes still require the FASTA, fetched on demand.)"""
     legacy = settings.parquet_dir / "features_master.parquet"
-    target = settings.feature_cache_dir / "hg38" / "chr21.parquet"
+    target = settings.feature_cache_dir / "hg38" / "chr21__w200_s200.parquet"
     if legacy.exists() and not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(legacy, target)

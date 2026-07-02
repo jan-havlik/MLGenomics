@@ -16,8 +16,8 @@ from app.schemas.training import (
     GenomeInfoSchema,
 )
 from app.tasks.extraction import (
-    cache_path,
-    extract_chromosome_features,
+    fasta_path,
+    prepare_genome,
 )
 
 router = APIRouter(prefix="/api", tags=["features"])
@@ -58,7 +58,7 @@ def list_chromosomes(genome: str = DEFAULT_GENOME):
     if info is None:
         raise HTTPException(status_code=404, detail=f"Unknown genome: {genome}")
     return [
-        ChromosomeInfo(name=chrom, cached=cache_path(genome, chrom).exists())
+        ChromosomeInfo(name=chrom, cached=fasta_path(genome, chrom).exists())
         for chrom in info.chromosomes
     ]
 
@@ -71,7 +71,7 @@ def cache_status(genome: str, chromosome: str):
     if not is_valid(genome, chromosome):
         raise HTTPException(status_code=404, detail=f"Unknown genome/chromosome: {genome}/{chromosome}")
 
-    cached = cache_path(genome, chromosome).exists()
+    cached = fasta_path(genome, chromosome).exists()
     raw = _redis().get(_progress_key(genome, chromosome))
     job = json.loads(raw) if raw else {}
     return CacheStatus(
@@ -106,7 +106,7 @@ def prepare_cache(genome: str, chromosome: str):
     if not is_valid(genome, chromosome):
         raise HTTPException(status_code=404, detail=f"Unknown genome/chromosome: {genome}/{chromosome}")
 
-    async_result = extract_chromosome_features.delay(genome, chromosome)
+    async_result = prepare_genome.delay(genome, chromosome)
     return CachePrepareResponse(
         task_id=async_result.id,
         genome=genome,

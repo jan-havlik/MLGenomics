@@ -29,22 +29,17 @@ async def submit_job(
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    # Supervised models require a BED file
-    if req.model_type != "isolation_forest" and bed_file is None:
-        raise HTTPException(
-            status_code=422,
-            detail="bed_file is required for supervised models (xgboost, random_forest)",
-        )
+    # Training always needs positive labels.
+    if bed_file is None:
+        raise HTTPException(status_code=422, detail="bed_file with positive labels is required")
 
-    bed_content: str | None = None
-    if bed_file is not None:
-        raw = await bed_file.read()
-        if len(raw) > settings.max_bed_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"BED file too large: {len(raw):,} bytes (max {settings.max_bed_bytes:,})",
-            )
-        bed_content = raw.decode("utf-8", errors="replace")
+    raw = await bed_file.read()
+    if len(raw) > settings.max_bed_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"BED file too large: {len(raw):,} bytes (max {settings.max_bed_bytes:,})",
+        )
+    bed_content = raw.decode("utf-8", errors="replace")
 
     # Create job record
     job_id = str(uuid.uuid4())
@@ -57,7 +52,7 @@ async def submit_job(
             "job_id": job_id,
             "status": "pending",
             "progress": 0.0,
-            "model_type": req.model_type,
+            "model_type": "xgboost",
             "genome": req.genome,
             "chromosome": req.chromosome,
             "created_at": now,

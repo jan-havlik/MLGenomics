@@ -1,16 +1,32 @@
 """
 ML model training functions adapted from phase0d_multi_feature.py.
-Supports XGBoost, Random Forest, and Isolation Forest.
+Single supervised model: XGBoost trained on the uploaded BED labels.
 """
 from __future__ import annotations
 
 import numpy as np
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
-from sklearn.ensemble import RandomForestClassifier, IsolationForest
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import roc_auc_score, average_precision_score, confusion_matrix
 from xgboost import XGBClassifier
 
 RANDOM_STATE = 42
+
+
+def threshold_metrics(y_true: np.ndarray, probs: np.ndarray, threshold: float = 0.5) -> dict:
+    """Precision / recall / F1 / specificity at a fixed probability cutoff —
+    the biologist-facing view of how the model behaves at its operating point."""
+    pred = (probs >= threshold).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, pred, labels=[0, 1]).ravel()
+    prec = tp / (tp + fp) if (tp + fp) else 0.0
+    rec = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+    spec = tn / (tn + fp) if (tn + fp) else 0.0
+    return {
+        "precision": float(prec),
+        "recall": float(rec),
+        "f1": float(f1),
+        "specificity": float(spec),
+    }
 
 
 def train_xgboost(
@@ -34,48 +50,6 @@ def train_xgboost(
     auc = roc_auc_score(y_te, probs)
     ap = average_precision_score(y_te, probs)
     return model, auc, ap
-
-
-def train_random_forest(
-    X_tr: np.ndarray,
-    y_tr: np.ndarray,
-    X_te: np.ndarray,
-    y_te: np.ndarray,
-    params: dict | None = None,
-) -> tuple:
-    defaults = dict(
-        n_estimators=500, max_depth=12, min_samples_leaf=3,
-        random_state=RANDOM_STATE, n_jobs=1,
-    )
-    if params:
-        defaults.update(params)
-    model = RandomForestClassifier(**defaults)
-    model.fit(X_tr, y_tr)
-    probs = model.predict_proba(X_te)[:, 1]
-    auc = roc_auc_score(y_te, probs)
-    ap = average_precision_score(y_te, probs)
-    return model, auc, ap
-
-
-def train_isolation_forest(
-    X_all: np.ndarray,
-    params: dict | None = None,
-) -> tuple:
-    """
-    Unsupervised anomaly detection — no labels required.
-    Returns (model, None, None) so the caller gets consistent shape.
-    """
-    _ISOFOREST_PARAMS = {"n_estimators", "contamination", "max_samples",
-                         "max_features", "bootstrap", "random_state", "n_jobs"}
-    defaults = dict(
-        n_estimators=500, contamination=0.1,
-        random_state=RANDOM_STATE, n_jobs=1,
-    )
-    if params:
-        defaults.update({k: v for k, v in params.items() if k in _ISOFOREST_PARAMS})
-    model = IsolationForest(**defaults)
-    model.fit(X_all)
-    return model, None, None
 
 
 def run_cv(X: np.ndarray, y: np.ndarray, params: dict | None = None) -> np.ndarray:

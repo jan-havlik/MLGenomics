@@ -10,6 +10,7 @@ import {
   LibraryModelInfo,
 } from "../api/client";
 import { Skeleton } from "../components/Skeleton";
+import GenomePicker from "../components/GenomePicker";
 
 const MODEL_LABEL: Record<string, string> = {
   xgboost:          "XGBoost",
@@ -37,6 +38,10 @@ function ModelCard({
   const [predicting, setPredicting] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(model.display_name);
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [tGenome, setTGenome] = useState(model.genome);
+  const [tChrom, setTChrom] = useState(model.chromosome);
+  const [tReady, setTReady] = useState(false);
   const color = MODEL_COLOR[model.model_type] ?? "#94a3b8";
 
   const handleDelete = async () => {
@@ -45,10 +50,10 @@ function ModelCard({
     onDeleted();
   };
 
-  const handlePredict = async () => {
+  const handleApply = async () => {
     setPredicting(true);
     try {
-      const { job_id } = await runLibraryPredict(model.name);
+      const { job_id } = await runLibraryPredict(model.name, { genome: tGenome, chromosome: tChrom });
       navigate(`/jobs/${job_id}`);
     } catch {
       setPredicting(false);
@@ -109,7 +114,8 @@ function ModelCard({
       <div className="row row--wrap" style={{ gap: 24 }}>
         {model.auc != null && <Stat value={model.auc.toFixed(3)} label="AUC" />}
         <Stat value={String(model.n_features)} label="Features" />
-        <Stat value={model.chromosome} label="Chromosome" />
+        <Stat value={`${model.window_size} bp`} label="Window" />
+        <Stat value={`${model.genome} ${model.chromosome}`} label="Trained on" />
         <div style={{ marginLeft: "auto", textAlign: "right" }}>
           <div className="text-xs dim">{new Date(model.created_at).toLocaleDateString()}</div>
         </div>
@@ -126,8 +132,11 @@ function ModelCard({
       )}
 
       <div className="row row--wrap" style={{ gap: 10, paddingTop: 4, borderTop: "1px solid var(--surface-2)" }}>
-        <button className="btn btn--primary" onClick={handlePredict} disabled={predicting}>
-          {predicting ? "Running…" : "Run Predictions"}
+        <button
+          className={`btn ${applyOpen ? "btn--ghost" : "btn--primary"}`}
+          onClick={() => setApplyOpen((o) => !o)}
+        >
+          {applyOpen ? "Cancel" : "Apply to genome…"}
         </button>
         <a className="btn btn--ghost" href={exportLibraryUrl(model.name)} download>
           Export Bundle
@@ -141,6 +150,30 @@ function ModelCard({
           {confirming ? "Confirm delete?" : "Delete"}
         </button>
       </div>
+
+      {applyOpen && (
+        <div className="col col--gap-3" style={{ paddingTop: 4 }}>
+          <p className="dim text-xs" style={{ margin: 0 }}>
+            Detect this model's target on any genome/chromosome — features are extracted
+            at the model's {model.window_size} bp window, no labels needed.
+          </p>
+          <GenomePicker
+            genome={tGenome}
+            chromosome={tChrom}
+            onChange={(g, c) => { setTGenome(g); setTChrom(c); }}
+            onReady={setTReady}
+          />
+          <button
+            className="btn btn--primary"
+            onClick={handleApply}
+            disabled={predicting || !tReady}
+            title={!tReady ? "Prepare the target chromosome first" : undefined}
+            style={{ alignSelf: "flex-start" }}
+          >
+            {predicting ? "Running…" : `Detect on ${tGenome} ${tChrom}`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

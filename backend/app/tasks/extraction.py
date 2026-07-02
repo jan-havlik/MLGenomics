@@ -1,8 +1,15 @@
 """
-Celery task: fetch a chromosome FASTA from UCSC goldenPath, extract the 52
-features into a parquet, and cache the result on disk.
+Genome data cache.
 
-Cache key: {feature_cache_dir}/{genome}/{chrom}.parquet
+Two responsibilities, both keyed under {feature_cache_dir}/{genome}/:
+  • Raw FASTA        — {genome}/{chrom}.fa                  (downloaded from UCSC)
+  • Windowed parquet — {genome}/{chrom}__w{W}_s{S}.parquet  (52 features)
+
+The FASTA is downloaded by the `prepare_genome` task (the "Prepare data" button).
+Feature extraction is window-dependent, so it happens lazily inside the train /
+apply jobs via `ensure_feature_parquet`, which extracts from the cached FASTA
+(downloading it first if missing).
+
 Progress key in Redis: cache_job:{genome}:{chrom}
 """
 from __future__ import annotations
@@ -13,6 +20,7 @@ import shutil
 import tempfile
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 import redis
 
@@ -25,8 +33,12 @@ from app.core.genomes import is_valid, ucsc_fasta_url
 CACHE_PROGRESS_TTL = 3600  # 1h — extraction usually finishes in minutes
 
 
-def cache_path(genome: str, chrom: str) -> Path:
-    return settings.feature_cache_dir / genome / f"{chrom}.parquet"
+def fasta_path(genome: str, chrom: str) -> Path:
+    return settings.feature_cache_dir / genome / f"{chrom}.fa"
+
+
+def windowed_parquet_path(genome: str, chrom: str, window: int, step: int) -> Path:
+    return settings.feature_cache_dir / genome / f"{chrom}__w{window}_s{step}.parquet"
 
 
 def _redis() -> redis.Redis:
@@ -46,6 +58,7 @@ def _set_progress(r: redis.Redis, key: str, **fields) -> None:
 def _download_fasta(genome: str, chrom: str, dest: Path) -> None:
     """Download gzipped FASTA from UCSC and decompress to `dest`."""
     url = ucsc_fasta_url(genome, chrom)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(suffix=".fa.gz", delete=False) as tmp:
         gz_path = Path(tmp.name)
     try:
@@ -57,44 +70,60 @@ def _download_fasta(genome: str, chrom: str, dest: Path) -> None:
         gz_path.unlink(missing_ok=True)
 
 
-@celery.task(bind=True, name="tasks.extract_chromosome_features")
-def extract_chromosome_features(self, genome: str, chrom: str) -> dict:
+def ensure_fasta(genome: str, chrom: str) -> Path:
+    """Return the cached FASTA path, downloading it from UCSC if absent."""
+    dest = fasta_path(genome, chrom)
+    if not dest.exists():
+        _download_fasta(genome, chrom, dest)
+        enforce_cache_cap()
+    return dest
+
+
+def ensure_feature_parquet(
+    genome: str,
+    chrom: str,
+    window: int,
+    step: int,
+    progress: Callable[[float, str], None] | None = None,
+) -> Path:
+    """
+    Return the windowed feature parquet for (genome, chrom, window, step),
+    extracting it from the cached FASTA if missing. Downloads the FASTA first
+    when it isn't cached yet. Used by both the train and apply jobs.
+    """
+    parquet = windowed_parquet_path(genome, chrom, window, step)
+    if parquet.exists():
+        return parquet
+
+    fasta = ensure_fasta(genome, chrom)
+    extract_to_parquet(fasta, parquet, window_size=window, step_size=step, progress=progress)
+    enforce_cache_cap()
+    return parquet
+
+
+@celery.task(bind=True, name="tasks.prepare_genome")
+def prepare_genome(self, genome: str, chrom: str) -> dict:
+    """Download (and cache) the chromosome FASTA. No feature extraction —
+    that is window-dependent and happens inside the train/apply jobs."""
     if not is_valid(genome, chrom):
         raise ValueError(f"Unknown (genome, chromosome): {genome}/{chrom}")
 
     r = _redis()
     pkey = _progress_key(genome, chrom)
-    parquet = cache_path(genome, chrom)
+    fasta = fasta_path(genome, chrom)
 
-    if parquet.exists():
-        _set_progress(r, pkey, status="completed", progress=1.0,
-                      stage="Already cached", n_windows=None)
+    if fasta.exists():
+        _set_progress(r, pkey, status="completed", progress=1.0, stage="Already cached")
         return {"genome": genome, "chrom": chrom, "cached": True}
 
-    _set_progress(r, pkey, status="running", progress=0.0,
+    _set_progress(r, pkey, status="running", progress=0.1,
                   stage=f"Fetching {chrom}.fa.gz from UCSC")
-
-    fasta_tmp = settings.feature_cache_dir / f"_tmp_{genome}_{chrom}.fa"
     try:
-        _download_fasta(genome, chrom, fasta_tmp)
-
-        def progress(frac: float, msg: str) -> None:
-            # Map extractor's 0..1 onto 0.10..0.98 so download+write get the rest.
-            scaled = 0.10 + 0.88 * frac
-            _set_progress(r, pkey, status="running", progress=scaled, stage=msg)
-
-        n = extract_to_parquet(fasta_tmp, parquet, progress=progress)
+        _download_fasta(genome, chrom, fasta)
         enforce_cache_cap()
-
-        _set_progress(r, pkey, status="completed", progress=1.0,
-                      stage=f"Cached {n:,} windows", n_windows=n)
-        return {"genome": genome, "chrom": chrom, "cached": False, "n_windows": n}
-
+        _set_progress(r, pkey, status="completed", progress=1.0, stage="Genome data ready")
+        return {"genome": genome, "chrom": chrom, "cached": False}
     except Exception as exc:
-        _set_progress(r, pkey, status="failed", progress=0.0,
-                      stage=None, error=str(exc))
-        # Make sure we don't leave a half-written parquet behind.
-        parquet.unlink(missing_ok=True)
+        _set_progress(r, pkey, status="failed", progress=0.0, stage=None, error=str(exc))
+        fasta.unlink(missing_ok=True)
         raise
-    finally:
-        fasta_tmp.unlink(missing_ok=True)

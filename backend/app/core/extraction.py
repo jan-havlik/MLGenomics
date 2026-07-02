@@ -3,8 +3,10 @@ Feature extraction from FASTA: produces a parquet matching the schema
 expected by the training task (52 numeric features + _start, _end).
 
 Ported from research/phase0d_multi_feature.py (deleted in cleanup, recovered
-from initial commit). Window size and step are 200 bp non-overlapping —
-must stay in sync with the existing data/features_master.parquet.
+from initial commit). Window size and step are passed in by the caller — the
+window is derived per-job from the uploaded BED labels (e.g. ~25 bp for G4),
+so the same chromosome can be extracted at different resolutions and cached
+separately.
 """
 from __future__ import annotations
 
@@ -19,8 +21,8 @@ import pandas as pd
 
 from app.core.features import FEATURE_NAMES
 
-WINDOW_SIZE = 200
-STEP_SIZE = 200
+DEFAULT_WINDOW_SIZE = 200
+DEFAULT_STEP_SIZE = 200
 
 ProgressFn = Callable[[float, str], None]
 
@@ -168,10 +170,12 @@ def compute_features(sequence: str, start: int, end: int) -> Optional[dict]:
 def extract_to_parquet(
     fasta_path: Path,
     parquet_path: Path,
+    window_size: int = DEFAULT_WINDOW_SIZE,
+    step_size: int = DEFAULT_STEP_SIZE,
     progress: ProgressFn | None = None,
 ) -> int:
     """
-    Extract 52 features over 200bp non-overlapping windows.
+    Extract 52 features over `window_size` windows stepped by `step_size`.
     Writes parquet with columns: _start, _end, <52 features>.
     Returns the number of windows written.
 
@@ -183,10 +187,10 @@ def extract_to_parquet(
         progress(0.0, f"Parsing {fasta_path.name}")
     sequence = parse_fasta(fasta_path)
     seq_len = len(sequence)
-    n_windows = (seq_len - WINDOW_SIZE) // STEP_SIZE + 1
+    n_windows = max(0, (seq_len - window_size) // step_size + 1)
 
     if progress:
-        progress(0.05, f"Computing features over {n_windows:,} windows ({seq_len:,} bp)")
+        progress(0.05, f"Computing features over {n_windows:,} windows of {window_size} bp ({seq_len:,} bp)")
 
     starts = np.empty(n_windows, dtype=np.int32)
     ends = np.empty(n_windows, dtype=np.int32)
@@ -195,8 +199,8 @@ def extract_to_parquet(
     written = 0
     report_every = max(1, n_windows // 50)
     for i in range(n_windows):
-        start = i * STEP_SIZE
-        end = start + WINDOW_SIZE
+        start = i * step_size
+        end = start + window_size
         if end > seq_len:
             break
         feats = compute_features(sequence, start, end)

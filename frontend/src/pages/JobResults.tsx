@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { fetchJob, JobStatus, exportUrl, saveToLibrary, SaveToLibraryRequest } from "../api/client";
+import { fetchJob, JobStatus, exportUrl, saveToLibrary } from "../api/client";
 import { usePolling } from "../api/usePolling";
 import MetricsDisplay from "../components/MetricsDisplay";
 import IgvViewer from "../components/IgvViewer";
+import InfoDot from "../components/InfoDot";
 import { Skeleton } from "../components/Skeleton";
 
 interface StageEntry {
@@ -30,12 +31,7 @@ function SaveToLibraryForm({ jobId }: { jobId: string }) {
   const [saving, setSaving] = useState(false);
   const [savedName, setSavedName] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [form, setForm] = useState<SaveToLibraryRequest>({
-    name: "",
-    display_name: "",
-    description: "",
-    tags: [],
-  });
+  const [name, setName] = useState("");
 
   if (savedName) {
     return (
@@ -57,15 +53,17 @@ function SaveToLibraryForm({ jobId }: { jobId: string }) {
   }
 
   const handleSubmit = async () => {
-    if (!form.name || !form.display_name) {
-      setErr("Slug and display name are required");
+    const display = name.trim();
+    const slug = display.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!slug) {
+      setErr("Please enter a name");
       return;
     }
     setSaving(true);
     setErr(null);
     try {
-      await saveToLibrary(jobId, form);
-      setSavedName(form.name);
+      await saveToLibrary(jobId, { name: slug, display_name: display });
+      setSavedName(slug);
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setErr(msg ?? "Failed to save");
@@ -76,46 +74,22 @@ function SaveToLibraryForm({ jobId }: { jobId: string }) {
 
   return (
     <div className="card--inset" style={{ marginTop: 16, width: "100%" }}>
-      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
-        Save model to library
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
-        <div>
-          <label className="label">Slug (e.g. rlfs-xgb)</label>
-          <input
-            className="input"
-            placeholder="my-model-name"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })}
-          />
-        </div>
-        <div>
-          <label className="label">Display name</label>
-          <input
-            className="input"
-            placeholder="RLFS XGBoost chr21"
-            value={form.display_name}
-            onChange={(e) => setForm({ ...form, display_name: e.target.value })}
-          />
-        </div>
-      </div>
-      <div style={{ marginBottom: 12 }}>
-        <label className="label">Description (optional)</label>
-        <input
-          className="input"
-          placeholder="Brief description of this model"
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
+      <div style={{ display: "flex", alignItems: "center", fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
+        <span>Save model to library</span>
+        <InfoDot
+          align="left"
+          text="Saves this trained model to your Library. From there you can apply it to any other genome / chromosome — e.g. detect on mouse what you trained on human — without retraining."
         />
       </div>
       <div style={{ marginBottom: 16 }}>
-        <label className="label">Tags (comma-separated, optional)</label>
+        <label className="label">Name</label>
         <input
           className="input"
-          placeholder="rlfs, phase0, validated"
-          onChange={(e) =>
-            setForm({ ...form, tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })
-          }
+          placeholder="RLFS XGBoost chr21"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+          autoFocus
         />
       </div>
       {err && <div style={{ color: "var(--bad)", fontSize: 13, marginBottom: 12 }}>{err}</div>}
@@ -233,7 +207,7 @@ export default function JobResults() {
 
   const isRunning = job.status === "pending" || job.status === "running";
   const cls = STATUS_CLASS[job.status] ?? "";
-  const canSave = job.status === "completed" && job.model_type !== "isolation_forest";
+  const canSave = job.status === "completed";
 
   return (
     <div className="container route-fade">
@@ -292,7 +266,7 @@ export default function JobResults() {
 
           <div className="card" style={{ marginBottom: 20 }}>
             <h2 className="section-label" style={{ margin: "0 0 24px" }}>Results</h2>
-            <MetricsDisplay metrics={job.metrics} featureImportance={job.feature_importance} />
+            <MetricsDisplay metrics={job.metrics} />
           </div>
 
           <div className="card">

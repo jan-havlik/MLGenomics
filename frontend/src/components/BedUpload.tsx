@@ -3,10 +3,9 @@ import { useRef, useState, DragEvent } from "react";
 interface Props {
   file: File | null;
   onChange: (f: File | null) => void;
-  optional?: boolean;
 }
 
-export default function BedUpload({ file, onChange, optional }: Props) {
+export default function BedUpload({ file, onChange }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -61,7 +60,7 @@ export default function BedUpload({ file, onChange, optional }: Props) {
             Drop a BED file here or click to browse
           </div>
           <div className="dim text-xs" style={{ marginTop: 6 }}>
-            {optional ? "Optional for Isolation Forest · " : ""}BED3+ format · max 50 MB
+            BED3+ format · max 50 MB
           </div>
         </div>
       )}

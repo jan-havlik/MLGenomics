@@ -23,17 +23,16 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-import joblib
-import pandas as pd
 import redis as redis_mod
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.config import settings
-from app.core.export import predict_probs, write_bedgraph, write_highconf_bed
+from app.core.genomes import is_valid
 from app.schemas.library import (
     LibraryModelInfo,
     PatchLibraryRequest,
+    PredictRequest,
     SaveToLibraryRequest,
 )
 
@@ -72,7 +71,9 @@ def _read_info(name: str) -> LibraryModelInfo:
         display_name=info["display_name"],
         description=info.get("description", ""),
         model_type=meta["model_type"],
+        genome=meta.get("genome", "hg38"),
         chromosome=meta["chromosome"],
+        window_size=int(meta.get("window_size", 200)),
         auc=info.get("auc"),
         ap=info.get("ap"),
         n_features=len(meta["feature_cols"]),
@@ -273,71 +274,39 @@ async def import_library_model(file: UploadFile):
 # Run predictions with a library model (no training)
 # ---------------------------------------------------------------------------
 
-@router.post("/api/library/{name}/predict")
-def library_predict(name: str):
+@router.post("/api/library/{name}/predict", status_code=202)
+def library_predict(name: str, req: PredictRequest):
+    """Apply a saved model to a target genome/chromosome (cross-organism detection).
+
+    Dispatches an async job: features for the target are extracted at the model's
+    own window size (downloading the FASTA on demand), then scored.
+    """
     dest = _lib_dir(name)
     if not dest.exists():
         raise HTTPException(status_code=404, detail=f"Library model '{name}' not found")
+    if not is_valid(req.genome, req.chromosome):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown genome/chromosome: {req.genome}/{req.chromosome}",
+        )
 
     meta = json.loads((dest / "model_meta.json").read_text())
-    info = json.loads((dest / "library_info.json").read_text())
-    feature_cols = meta["feature_cols"]
-    chromosome = meta["chromosome"]
-    genome = meta.get("genome", "hg38")  # legacy library models predate the genome field
-    model_type = meta["model_type"]
 
-    from app.tasks.extraction import cache_path
-    parquet_path = cache_path(genome, chromosome)
-    if not parquet_path.exists():
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Feature cache missing for {genome}/{chromosome}. "
-                f"Trigger extraction via POST /api/genome/{genome}/chromosome/{chromosome}/prepare first."
-            ),
-        )
-
-    df = pd.read_parquet(parquet_path)
-    missing = [c for c in feature_cols if c not in df.columns]
-    if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Feature matrix missing columns: {missing[:5]}",
-        )
-
-    model = joblib.load(dest / "model.joblib")
-    probs = predict_probs(model, df, feature_cols)
-
-    # Write outputs to a new job dir
     job_id = str(uuid.uuid4())
-    job_dir = settings.jobs_dir / job_id
-    job_dir.mkdir(parents=True)
-    write_bedgraph(df, probs, chromosome, job_dir / "predictions.bedGraph", track_name=name)
-    n_highconf = write_highconf_bed(df, probs, chromosome, job_dir / "highconf.bed", track_name=name)
-
-    # Create a completed job record in Redis (no TTL extension — uses default)
     now = datetime.now(timezone.utc).isoformat()
-    job_record = {
-        "job_id": job_id,
-        "status": "completed",
-        "progress": 1.0,
-        "model_type": model_type,
-        "chromosome": chromosome,
-        "created_at": now,
-        "metrics": {
-            "auc": info.get("auc"),
-            "ap": info.get("ap"),
-            "cv_auc_mean": 0.0,
-            "cv_auc_std": 0.0,
-            "n_positives": 0,
-            "n_negatives": 0,
-            "n_highconf_regions": n_highconf,
-        },
-        "feature_importance": None,
-        "error": None,
-        "library_model": name,
-    }
     r = _redis()
-    r.setex(f"job:{job_id}", settings.job_ttl_seconds, json.dumps(job_record))
+    r.setex(f"job:{job_id}", settings.job_ttl_seconds, json.dumps({
+        "job_id": job_id,
+        "status": "pending",
+        "progress": 0.0,
+        "model_type": meta["model_type"],
+        "genome": req.genome,
+        "chromosome": req.chromosome,
+        "created_at": now,
+        "library_model": name,
+    }))
+
+    from app.tasks.predict import apply_model
+    apply_model.delay(job_id, name, req.genome, req.chromosome)
 
     return {"job_id": job_id}

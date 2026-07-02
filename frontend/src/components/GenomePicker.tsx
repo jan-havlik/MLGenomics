@@ -220,8 +220,8 @@ export default function GenomePicker({ genome, chromosome, onChange, onReady }: 
         </div>
       </div>
       <p className="dim text-xs" style={{ marginTop: 10 }}>
-        First use of a chromosome triggers a one-time download from UCSC goldenPath and feature
-        extraction. The result is cached for all future jobs.
+        First use of a chromosome triggers a one-time download from UCSC goldenPath. Feature
+        extraction then runs per job at its window size and is cached for reuse.
       </p>
 
       {usage && (

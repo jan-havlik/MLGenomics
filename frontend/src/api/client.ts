@@ -87,9 +87,16 @@ export interface JobMetrics {
   ap: number | null;
   cv_auc_mean: number;
   cv_auc_std: number;
+  precision: number | null;
+  recall: number | null;
+  f1: number | null;
+  specificity: number | null;
   n_positives: number;
   n_negatives: number;
   n_highconf_regions: number;
+  n_windows_total: number;
+  flagged_fraction: number;
+  flagged_bp: number;
 }
 
 export interface JobStatus {
@@ -119,7 +126,8 @@ export interface JobListItem {
 export interface TrainConfig {
   genome: string;
   chromosome: string;
-  model_type: string;
+  window_size: number;
+  step_size?: number | null;
   features: string[] | null;
   model_params: Record<string, number> | null;
   neg_ratio: number;
@@ -201,7 +209,9 @@ export interface LibraryModelInfo {
   display_name: string;
   description: string;
   model_type: string;
+  genome: string;
   chromosome: string;
+  window_size: number;
   auc: number | null;
   ap: number | null;
   n_features: number;
@@ -252,5 +262,8 @@ export const importLibraryModel = (zipFile: File): Promise<LibraryModelInfo> => 
   return api.post<LibraryModelInfo>("/library/import", form).then((r) => r.data);
 };
 
-export const runLibraryPredict = (name: string): Promise<{ job_id: string }> =>
-  api.post<{ job_id: string }>(`/library/${name}/predict`).then((r) => r.data);
+export const runLibraryPredict = (
+  name: string,
+  target: { genome: string; chromosome: string }
+): Promise<{ job_id: string }> =>
+  api.post<{ job_id: string }>(`/library/${name}/predict`, target).then((r) => r.data);

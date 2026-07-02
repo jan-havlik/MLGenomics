@@ -1,21 +1,40 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchFeatures, submitJob, FeatureInfo } from "../api/client";
+import { submitJob } from "../api/client";
 import BedUpload from "../components/BedUpload";
-import FeatureSelector from "../components/FeatureSelector";
 import GenomePicker from "../components/GenomePicker";
-import ModelPicker from "../components/ModelPicker";
+import InfoDot from "../components/InfoDot";
 
-const STEPS = ["Upload labels", "Select features", "Configure model"];
+const flexLabel = { display: "flex", alignItems: "center" } as const;
+
+const STEPS = ["Upload labels", "Training options"];
+
+// Median width of the BED regions → a sensible default feature window. R-loop
+// regions run a few hundred bp; G4 calls are ~25 bp. Rounded to a tidy value.
+async function suggestWindowFromBed(file: File): Promise<number | null> {
+  const text = await file.text();
+  const widths: number[] = [];
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#") || t.startsWith("track") || t.startsWith("browser")) continue;
+    const parts = t.split(/\s+/);
+    if (parts.length < 3) continue;
+    const s = parseInt(parts[1], 10);
+    const e = parseInt(parts[2], 10);
+    if (Number.isFinite(s) && Number.isFinite(e) && e > s) widths.push(e - s);
+  }
+  if (widths.length === 0) return null;
+  widths.sort((a, b) => a - b);
+  const median = widths[Math.floor(widths.length / 2)];
+  return Math.max(10, Math.round(median / 5) * 5);
+}
 
 export default function NewJob() {
   const navigate = useNavigate();
-  const [features, setFeatures] = useState<FeatureInfo[]>([]);
-  const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
   const [genome, setGenome] = useState("hg38");
   const [chromosome, setChromosome] = useState("chr21");
   const [chromReady, setChromReady] = useState(false);
-  const [modelType, setModelType] = useState("xgboost");
+  const [windowSize, setWindowSize] = useState(200);
   const [modelParams, setModelParams] = useState({ n_estimators: 500, max_depth: 8 });
   const [negRatio, setNegRatio] = useState(3);
   const [bedFile, setBedFile] = useState<File | null>(null);
@@ -23,28 +42,27 @@ export default function NewJob() {
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
 
-  useEffect(() => {
-    fetchFeatures().then((fs) => {
-      setFeatures(fs);
-      setSelectedFeatures(new Set(fs.map((f) => f.name)));
-    });
-  }, []);
+  const handleBedChange = (file: File | null) => {
+    setBedFile(file);
+    if (file) {
+      suggestWindowFromBed(file).then((w) => { if (w) setWindowSize(w); });
+    }
+  };
 
   const handleSubmit = async () => {
-    if (modelType !== "isolation_forest" && !bedFile) {
+    if (!bedFile) {
       setError("Please upload a BED file");
       return;
     }
     if (!chromReady) {
-      setError("Chromosome data is not yet cached — click 'Prepare data' first.");
+      setError("Genome data is not yet ready — click 'Prepare data' first.");
       return;
     }
     setError(null);
     setSubmitting(true);
     try {
-      const featureList = selectedFeatures.size === features.length ? null : [...selectedFeatures];
       const { job_id } = await submitJob(
-        { genome, chromosome, model_type: modelType, features: featureList, model_params: modelParams, neg_ratio: negRatio, test_fraction: 0.2 },
+        { genome, chromosome, window_size: windowSize, features: null, model_params: modelParams, neg_ratio: negRatio, test_fraction: 0.2 },
         bedFile,
       );
       navigate(`/jobs/${job_id}`);
@@ -119,17 +137,41 @@ export default function NewJob() {
               Upload label regions
             </h2>
             <p className="page-sub" style={{ marginBottom: 20 }}>
-              Each BED region that overlaps a 200 bp window labels it as positive.
+              Each BED region that overlaps a feature window labels it as positive.
             </p>
-            <BedUpload file={bedFile} onChange={setBedFile} optional={modelType === "isolation_forest"} />
-            <div style={{ marginTop: 18 }}>
-              <label className="row row--gap-3 mute" style={{ fontSize: 14 }}>
-                Negative : positive ratio
+            <BedUpload file={bedFile} onChange={handleBedChange} />
+            <div className="row row--wrap" style={{ marginTop: 18, gap: 24 }}>
+              <label className="col col--gap-2" style={{ fontSize: 14 }}>
+                <span className="mute" style={flexLabel}>
+                  Feature window (bp)
+                  <InfoDot
+                    align="left"
+                    text="Width (bp) of each window the model classifies. Auto-set from the median width of your BED regions. Smaller windows (e.g. ~25 bp for G4) localize sharper but produce many more windows; larger ones are coarser. The model stores this size and re-uses it when applied to other genomes."
+                  />
+                </span>
+                <input
+                  type="number" min={10} max={5000} step={5} value={windowSize}
+                  onChange={(e) => setWindowSize(+e.target.value)}
+                  className="input input--sm"
+                  style={{ width: 110 }}
+                />
+                <span className="dim text-xs">
+                  Auto-set from your BED region widths — adjust if needed (e.g. ~25 for G4).
+                </span>
+              </label>
+              <label className="col col--gap-2" style={{ fontSize: 14 }}>
+                <span className="mute" style={flexLabel}>
+                  Negative : positive ratio
+                  <InfoDot
+                    align="left"
+                    text="How many background (negative) windows to sample per positive window. 3 means a 1:3 positive:negative training set. The model needs enough negatives to learn — if your BED covers most of the chromosome there may not be enough background, which collapses the score toward random."
+                  />
+                </span>
                 <input
                   type="number" min={1} max={20} value={negRatio}
                   onChange={(e) => setNegRatio(+e.target.value)}
                   className="input input--sm"
-                  style={{ width: 76 }}
+                  style={{ width: 110 }}
                 />
               </label>
             </div>
@@ -139,30 +181,43 @@ export default function NewJob() {
         {step === 1 && (
           <div>
             <h2 style={{ fontSize: 17, fontWeight: 600, margin: "0 0 6px" }}>
-              Select features
-            </h2>
-            <p className="page-sub" style={{ marginBottom: 16 }}>
-              Toggle feature groups or individual features. Deselecting irrelevant groups often improves performance.
-            </p>
-            <div style={{ maxHeight: 380, overflowY: "auto", paddingRight: 8 }}>
-              <FeatureSelector features={features} selected={selectedFeatures} onChange={setSelectedFeatures} />
-            </div>
-          </div>
-        )}
-
-        {step === 2 && (
-          <div>
-            <h2 style={{ fontSize: 17, fontWeight: 600, margin: "0 0 6px" }}>
-              Configure model
+              Training options
             </h2>
             <p className="page-sub" style={{ marginBottom: 20 }}>
-              Pick an algorithm and tune hyperparameters.
+              An XGBoost classifier is trained on all 51 sequence features. Tune the hyperparameters if you like.
             </p>
-            <ModelPicker
-              modelType={modelType}
-              params={modelParams}
-              onChange={(t, p) => { setModelType(t); setModelParams(p); }}
-            />
+            <div className="row row--wrap" style={{ gap: 24 }}>
+              <label className="col col--gap-2" style={{ fontSize: 14 }}>
+                <span className="mute" style={flexLabel}>
+                  Trees (n_estimators)
+                  <InfoDot
+                    align="left"
+                    text="Number of boosted trees in the XGBoost model. More trees can capture more detail but train slower and can overfit. 300–500 is a sensible range."
+                  />
+                </span>
+                <input
+                  type="number" min={50} max={1000} step={50} value={modelParams.n_estimators}
+                  onChange={(e) => setModelParams({ ...modelParams, n_estimators: +e.target.value })}
+                  className="input input--sm"
+                  style={{ width: 110 }}
+                />
+              </label>
+              <label className="col col--gap-2" style={{ fontSize: 14 }}>
+                <span className="mute" style={flexLabel}>
+                  Max depth
+                  <InfoDot
+                    align="left"
+                    text="Maximum depth of each tree. Deeper trees model more complex feature interactions but overfit more easily. 6–10 works well for these sequence features."
+                  />
+                </span>
+                <input
+                  type="number" min={3} max={20} value={modelParams.max_depth}
+                  onChange={(e) => setModelParams({ ...modelParams, max_depth: +e.target.value })}
+                  className="input input--sm"
+                  style={{ width: 110 }}
+                />
+              </label>
+            </div>
           </div>
         )}
       </div>

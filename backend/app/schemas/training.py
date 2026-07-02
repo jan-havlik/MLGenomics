@@ -6,18 +6,19 @@ from pydantic import BaseModel, field_validator
 class TrainRequest(BaseModel):
     genome: str = "hg38"
     chromosome: str = "chr21"
-    model_type: str = "xgboost"  # xgboost | random_forest | isolation_forest
+    # Feature window in bp — derived per-job from the uploaded BED region widths.
+    window_size: int = 200
+    step_size: Optional[int] = None  # None → non-overlapping (= window_size)
     features: Optional[list[str]] = None  # None → use all 52
     model_params: Optional[dict] = None
     neg_ratio: int = 3
     test_fraction: float = 0.2
 
-    @field_validator("model_type")
+    @field_validator("window_size")
     @classmethod
-    def validate_model(cls, v: str) -> str:
-        allowed = {"xgboost", "random_forest", "isolation_forest"}
-        if v not in allowed:
-            raise ValueError(f"model_type must be one of {allowed}")
+    def validate_window(cls, v: int) -> int:
+        if v < 10:
+            raise ValueError("window_size must be >= 10 bp")
         return v
 
 
