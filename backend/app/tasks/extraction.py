@@ -27,7 +27,7 @@ import redis
 from celery_app import celery
 from app.config import settings
 from app.core.cache_eviction import enforce_cache_cap
-from app.core.extraction import extract_to_parquet
+from app.core.extraction import extract_kmer_to_parquet, extract_to_parquet
 from app.core.genomes import is_valid, ucsc_fasta_url
 
 CACHE_PROGRESS_TTL = 3600  # 1h — extraction usually finishes in minutes
@@ -39,6 +39,12 @@ def fasta_path(genome: str, chrom: str) -> Path:
 
 def windowed_parquet_path(genome: str, chrom: str, window: int, step: int) -> Path:
     return settings.feature_cache_dir / genome / f"{chrom}__w{window}_s{step}.parquet"
+
+
+def kmer_parquet_path(genome: str, chrom: str, window: int, step: int, k: int) -> Path:
+    """Cache path for the raw k-mer spectrum — keyed by k so it never collides
+    with the curated (52-feature) parquet for the same window/step."""
+    return settings.feature_cache_dir / genome / f"{chrom}__k{k}_w{window}_s{step}.parquet"
 
 
 def _redis() -> redis.Redis:
@@ -85,12 +91,28 @@ def ensure_feature_parquet(
     window: int,
     step: int,
     progress: Callable[[float, str], None] | None = None,
+    feature_set: str = "curated",
+    k: int | None = None,
 ) -> Path:
     """
     Return the windowed feature parquet for (genome, chrom, window, step),
     extracting it from the cached FASTA if missing. Downloads the FASTA first
     when it isn't cached yet. Used by both the train and apply jobs.
+
+    feature_set="curated" (default) emits the 52 curated features; "kmer" emits
+    the raw 4^k k-mer spectrum (requires k). The two are cached separately.
     """
+    if feature_set == "kmer":
+        if k is None:
+            raise ValueError("feature_set='kmer' requires k")
+        parquet = kmer_parquet_path(genome, chrom, window, step, k)
+        if parquet.exists():
+            return parquet
+        fasta = ensure_fasta(genome, chrom)
+        extract_kmer_to_parquet(fasta, parquet, k, window_size=window, step_size=step, progress=progress)
+        enforce_cache_cap()
+        return parquet
+
     parquet = windowed_parquet_path(genome, chrom, window, step)
     if parquet.exists():
         return parquet

@@ -18,13 +18,28 @@ from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from app.core.features import FEATURE_NAMES
 
 DEFAULT_WINDOW_SIZE = 200
 DEFAULT_STEP_SIZE = 200
 
+# k-mer spectrum: emit the full 4^k frequency vector per window instead of the
+# curated features. Capped at 6 (4096 columns) — beyond that windows get too
+# sparse and the matrix too wide to be useful.
+MAX_KMER_K = 6
+
 ProgressFn = Callable[[float, str], None]
+
+# ACGT -> 0..3, everything else (N, masks) -> -1. Column index of a k-mer is its
+# base-4 value under this map, which matches the lexicographic order that
+# itertools.product("ACGT") emits — so `kmer_feature_names` and the counts below
+# stay aligned without a lookup dict.
+_BASE_LUT = np.full(256, -1, dtype=np.int16)
+for _b, _v in zip(b"ACGT", range(4)):
+    _BASE_LUT[_b] = _v
 
 
 def parse_fasta(path: Path) -> str:
@@ -49,6 +64,117 @@ def _kmer_freq(seq: str, k: int = 2) -> dict[str, float]:
     if total == 0:
         return {km: 0.0 for km in kmers}
     return {km: counts[km] / total for km in kmers}
+
+
+def kmer_feature_names(k: int) -> list[str]:
+    """Column names for the raw k-mer spectrum: ['kmer_AAAA', ...] (4^k of them)."""
+    if not 1 <= k <= MAX_KMER_K:
+        raise ValueError(f"k must be between 1 and {MAX_KMER_K} (got {k})")
+    return ["kmer_" + "".join(c) for c in iter_product("ACGT", repeat=k)]
+
+
+def extract_kmer_to_parquet(
+    fasta_path: Path,
+    parquet_path: Path,
+    k: int,
+    window_size: int = DEFAULT_WINDOW_SIZE,
+    step_size: int = DEFAULT_STEP_SIZE,
+    progress: ProgressFn | None = None,
+) -> int:
+    """
+    Raw k-mer spectrum extractor: the full 4^k k-mer frequency vector per window.
+    A drop-in alternative to `extract_to_parquet` — same _start/_end schema, just
+    4^k `kmer_*` columns instead of the 52 curated features. Windows are skipped
+    when >50% of bases are N/masked; k-mers spanning an N are dropped from the
+    count, and the remaining counts are normalised to frequencies.
+
+    The 4^k matrix is up to ~78x wider than the curated one, so rows are written
+    to parquet in chunks (a fixed-size buffer is flushed per row group) to keep
+    peak memory bounded regardless of chromosome length. Returns rows written.
+    """
+    names = kmer_feature_names(k)
+    ncol = len(names)  # 4^k
+
+    if progress:
+        progress(0.0, f"Parsing {fasta_path.name}")
+    sequence = parse_fasta(fasta_path)
+    seq_len = len(sequence)
+    n_windows = max(0, (seq_len - window_size) // step_size + 1)
+
+    # Map the whole chromosome to base codes once; slice per window below.
+    seq_codes = _BASE_LUT[np.frombuffer(sequence.encode("ascii", "replace"), dtype=np.uint8)]
+    del sequence
+
+    if progress:
+        progress(0.05, f"Counting {ncol:,} {k}-mers over {n_windows:,} windows of {window_size} bp ({seq_len:,} bp)")
+
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    schema = pa.schema(
+        [pa.field("_start", pa.int32()), pa.field("_end", pa.int32())]
+        + [pa.field(nm, pa.float32()) for nm in names]
+    )
+    writer = pq.ParquetWriter(parquet_path, schema)
+
+    CHUNK = 20_000  # ~20k * 4096 * 4B ≈ 320 MB per buffered chunk at k=6
+    buf_start = np.empty(CHUNK, dtype=np.int32)
+    buf_end = np.empty(CHUNK, dtype=np.int32)
+    buf_mat = np.empty((CHUNK, ncol), dtype=np.float32)
+    fill = 0
+    written = 0
+
+    def flush() -> None:
+        nonlocal fill
+        if fill == 0:
+            return
+        arrays = [pa.array(buf_start[:fill]), pa.array(buf_end[:fill])]
+        arrays.extend(pa.array(buf_mat[:fill, j]) for j in range(ncol))
+        writer.write_table(pa.Table.from_arrays(arrays, schema=schema))
+        fill = 0
+
+    report_every = max(1, n_windows // 50)
+    try:
+        for i in range(n_windows):
+            start = i * step_size
+            end = start + window_size
+            if end > seq_len:
+                break
+            vals = seq_codes[start:end]
+            if int((vals >= 0).sum()) < window_size * 0.5:  # >50% N/masked
+                continue
+            n = len(vals) - k + 1
+            if n <= 0:
+                continue
+            # Roll a base-4 code across the window; mark k-mers that span an N.
+            code = np.zeros(n, dtype=np.int32)
+            bad = np.zeros(n, dtype=bool)
+            for j in range(k):
+                seg = vals[j:j + n]
+                code = code * 4 + np.where(seg >= 0, seg, 0).astype(np.int32)
+                bad |= seg < 0
+            good = code[~bad]
+            if good.size == 0:
+                continue
+            counts = np.bincount(good, minlength=ncol).astype(np.float32)
+            counts /= good.size
+
+            buf_start[fill] = start
+            buf_end[fill] = end
+            buf_mat[fill] = counts
+            fill += 1
+            written += 1
+            if fill == CHUNK:
+                flush()
+            if progress and i % report_every == 0:
+                progress(0.05 + 0.90 * (i / n_windows), f"Window {i:,}/{n_windows:,}")
+
+        flush()
+    finally:
+        writer.close()
+
+    if progress:
+        progress(1.0, f"Done — {written:,} windows")
+
+    return written
 
 
 def compute_features(sequence: str, start: int, end: int) -> Optional[dict]:

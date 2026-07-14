@@ -58,6 +58,8 @@ def apply_model(self, job_id: str, library_name: str, genome: str, chromosome: s
         feature_cols = meta["feature_cols"]
         window_size = int(meta.get("window_size", 200))  # legacy models → 200
         step_size = int(meta.get("step_size", window_size))
+        feature_set = meta.get("feature_set", "curated")  # legacy models → curated
+        k = meta.get("k")
 
         # ── Extract target features at the model's window (cached per window) ──
         def extract_progress(frac: float, msg: str) -> None:
@@ -66,6 +68,7 @@ def apply_model(self, job_id: str, library_name: str, genome: str, chromosome: s
         stage(f"Preparing {genome}/{chromosome} at {window_size} bp windows", 0.08)
         parquet_path = ensure_feature_parquet(
             genome, chromosome, window_size, step_size, progress=extract_progress,
+            feature_set=feature_set, k=k,
         )
         needed_cols = ["_start", "_end"] + feature_cols
         df = pd.read_parquet(parquet_path, columns=needed_cols)

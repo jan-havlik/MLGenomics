@@ -19,10 +19,10 @@ export default defineConfig({
         // Split heavy vendor libs into their own chunks so the initial app
         // bundle stays small. IGV in particular is multi-MB and only used
         // on the JobResults page.
-        manualChunks: {
-          react: ["react", "react-dom", "react-router-dom"],
-          recharts: ["recharts"],
-          igv: ["igv"],
+        manualChunks: (id) => {
+          if (/node_modules\/(react|react-dom|react-router-dom)\//.test(id)) return "react";
+          if (/node_modules\/recharts\//.test(id)) return "recharts";
+          if (/node_modules\/igv\//.test(id)) return "igv";
         },
       },
     },

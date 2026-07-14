@@ -24,6 +24,7 @@ import redis
 
 from celery_app import celery
 from app.config import settings
+from app.core.extraction import kmer_feature_names
 from app.core.features import FEATURE_NAMES
 from app.core.genomes import is_valid
 from app.core.models import (
@@ -105,6 +106,8 @@ def train_model(
         test_fraction = config.get("test_fraction", 0.2)
         window_size = int(config.get("window_size") or 200)
         step_size = int(config.get("step_size") or window_size)
+        feature_set = config.get("feature_set") or "curated"
+        k = config.get("k")
 
         if not is_valid(genome, chromosome):
             raise ValueError(f"Unknown genome/chromosome: {genome}/{chromosome}")
@@ -114,9 +117,17 @@ def train_model(
         if not bed_content:
             raise ValueError("BED file with positive labels is required")
 
-        feature_cols = requested_features if requested_features else FEATURE_NAMES
+        # Available columns depend on the feature set: the 52 curated features,
+        # or the raw 4^k k-mer spectrum (k defaults to 6 — the usual sweet spot).
+        if feature_set == "kmer":
+            k = int(k) if k else 6
+            available = kmer_feature_names(k)
+        else:
+            k = None
+            available = FEATURE_NAMES
+        feature_cols = requested_features if requested_features else available
         if requested_features:
-            bad = [f for f in requested_features if f not in set(FEATURE_NAMES)]
+            bad = [f for f in requested_features if f not in set(available)]
             if bad:
                 raise ValueError(f"Unknown features: {bad}")
 
@@ -127,6 +138,7 @@ def train_model(
         stage(f"Preparing {chromosome} features at {window_size} bp windows", 0.08)
         parquet_path = ensure_feature_parquet(
             genome, chromosome, window_size, step_size, progress=extract_progress,
+            feature_set=feature_set, k=k,
         )
         needed_cols = ["_start", "_end"] + feature_cols
         df = pd.read_parquet(parquet_path, columns=needed_cols)
@@ -192,6 +204,10 @@ def train_model(
         stage(f"CV AUC {cv_mean:.3f} ±{cv_std:.3f}", 0.76)
 
         fi = feature_importance_dict(model, feature_cols)
+        # The k-mer spectrum can be 4096 columns — keep only the top ranks so the
+        # payload stays small and the "which k-mers mattered" readout is usable.
+        if feature_set == "kmer" and len(fi) > 50:
+            fi = dict(sorted(fi.items(), key=lambda kv: kv[1], reverse=True)[:50])
 
         # ── 6. Predict on ALL windows ─────────────────────────────────────────
         stage(f"Scoring {len(starts):,} genome windows", 0.82)
@@ -232,6 +248,8 @@ def train_model(
                 "model_type": "xgboost",
                 "genome": genome,
                 "chromosome": chromosome,
+                "feature_set": feature_set,
+                "k": k,
                 "feature_cols": feature_cols,
                 "window_size": window_size,
                 "step_size": step_size,
